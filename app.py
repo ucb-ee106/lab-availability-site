@@ -36,7 +36,8 @@ def get_station_data():
         cursor.close()
         conn.close()
         return data
-    else:  # csv
+
+    else:  # CSV mode
         data = []
         with open(CSV_PATH, 'r') as f:
             reader = csv.DictReader(f)
@@ -45,6 +46,7 @@ def get_station_data():
                 is_occupied = row['occupied'].lower() == 'true'
                 data.append((station_num, is_occupied))
         return data
+
 
 def get_lab_status():
     """Calculate lab status from configured data source."""
@@ -67,17 +69,19 @@ def get_lab_status():
         'ur7es_available': ur7es_available
     }
 
+
 @app.route('/')
 def index():
     lab_status = get_lab_status()
     return render_template('index.html', lab_status=lab_status)
+
 
 @app.route('/lab_room.svg')
 def get_svg():
     """Serve the SVG with dynamically updated desk colors based on configured data source."""
     svg_path = 'static/lab_room.svg'
 
-    # Get station status from configured data source
+    # Get station status
     station_colors = {}
     for station_num, is_occupied in get_station_data():
         color = RED if is_occupied else GREEN
@@ -97,3 +101,4 @@ def get_svg():
 
 if __name__ == '__main__':
     app.run(host="127.0.0.1", port=5000)
+
