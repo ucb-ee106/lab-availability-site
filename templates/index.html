@@ -47,9 +47,25 @@
             font-size: 0.95em;
             line-height: 1.5;
         }
-        svg {
+        svg, img {
             max-width: 100%;
             height: auto;
+        }
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 15px;
+            }
+            .main-content {
+                flex-direction: column;
+                gap: 15px;
+            }
+            .lab-status {
+                width: 100%;
+                min-width: auto;
+            }
         }
     </style>
 </head>
@@ -57,7 +73,7 @@
     <div class="container">
         <h1>Cory 105 Lab Availability</h1>
         <div class="main-content">
-            <object data="{{ url_for('get_svg') }}" type="image/svg+xml"></object>
+            <img src="{{ url_for('get_svg') }}" alt="Lab room layout">
             <div class="lab-status">
                 <h2>Lab Status:</h2>
                 <div class="status">{% if lab_status.is_open %}Open{% else %}Closed{% endif %}</div>
