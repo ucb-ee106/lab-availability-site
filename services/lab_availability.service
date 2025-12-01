@@ -1,0 +1,13 @@
+[Unit]
+Description=Lab Availability Flask App
+ConditionPathExists=/etc/is-instapphost
+
+[Service]
+WorkingDirectory=/home/ff/ee106a/lab-availability-site
+Environment="DATA_SOURCE=database"
+ExecStart=/home/ff/ee106a/venvs/testing/bin/gunicorn -w 4 -b unix:/srv/appsockets/ee106a/main/app.sock app:app
+Restart=always
+
+[Install]
+WantedBy=default.target
+

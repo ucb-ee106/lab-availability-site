@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Lab Availability Database
+ConditionPathExists=/etc/is-instapphost
+
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ff/ee106a/lab-availability-site
+ExecStart=/home/ff/ee106a/venvs/testing/bin/python3 /home/ff/ee106a/lab-availability-site/update_db.py
+
