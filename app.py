@@ -147,12 +147,49 @@ def get_queue_data():
         'turtlebot': turtlebot_queue
     }
 
+def generate_lab_alt_text(station_data):
+    """Generate descriptive alt text for screen readers."""
+    turtlebot_open = []
+    turtlebot_occupied = []
+    ur7e_open = []
+    ur7e_occupied = []
+
+    for station_num, is_occupied in station_data:
+        if station_num in TURTLEBOT_STATIONS:
+            if is_occupied:
+                turtlebot_occupied.append(station_num)
+            else:
+                turtlebot_open.append(station_num)
+        elif station_num in UR7E_STATIONS:
+            if is_occupied:
+                ur7e_occupied.append(station_num)
+            else:
+                ur7e_open.append(station_num)
+
+    # Build descriptive text
+    parts = ["Cory 105 lab room layout showing station availability."]
+
+    # Turtlebot stations
+    if turtlebot_open:
+        parts.append(f"Turtlebot stations open: {', '.join(map(str, sorted(turtlebot_open)))}.")
+    if turtlebot_occupied:
+        parts.append(f"Turtlebot stations occupied: {', '.join(map(str, sorted(turtlebot_occupied)))}.")
+
+    # UR7e stations
+    if ur7e_open:
+        parts.append(f"UR7e stations open: {', '.join(map(str, sorted(ur7e_open)))}.")
+    if ur7e_occupied:
+        parts.append(f"UR7e stations occupied: {', '.join(map(str, sorted(ur7e_occupied)))}.")
+
+    return " ".join(parts)
+
 def get_lab_status():
     """Calculate lab status from configured data source."""
     turtlebots_available = 0
     ur7es_available = 0
+    station_data = list(get_station_data())
 
-    for station_num, is_occupied in get_station_data():
+    for station_num, is_occupied in station_data:
         if not is_occupied:
             if station_num in TURTLEBOT_STATIONS:
                 turtlebots_available += 1
@@ -172,7 +209,8 @@ def get_lab_status():
         'turtlebots_available': turtlebots_available,
         'ur7es_available': ur7es_available,
         'show_ur7e_queue': show_ur7e_queue,
-        'show_turtlebot_queue': show_turtlebot_queue
+        'show_turtlebot_queue': show_turtlebot_queue,
+        'alt_text': generate_lab_alt_text(station_data)
     }
 
 

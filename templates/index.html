@@ -16,7 +16,7 @@
     <div class="container">
         <h1>Cory 105 Lab Availability</h1>
         <div class="main-content">
-            <img src="{{ url_for('get_svg') }}" alt="Lab room layout">
+            <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}">
             <div>
                 <div class="lab-status">
                     <h2>Lab Status:</h2>
@@ -31,33 +31,54 @@
                     <h3>Turtlebot Queue Size: {{ queue.turtlebot|length }} groups</h3>
                     {% if queue.turtlebot %}
                     <table class="queue-table">
-                        {% for person in queue.turtlebot %}
-                        <tr>
-                            <td>{{ loop.index }}. {{ person.name }}</td>
-                        </tr>
-                        {% endfor %}
+                        <thead>
+                            <tr>
+                                <th scope="col">Position</th>
+                                <th scope="col">Group Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for person in queue.turtlebot %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ person.name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
                     </table>
                     {% endif %}
                 </div>
-                <button class="queue-button">Add to Turtlebot Queue</button>
+                <button class="queue-button" aria-label="Add to Turtlebot Queue">Add to Turtlebot Queue</button>
                 {% endif %}
                 {% if lab_status.show_ur7e_queue %}
                 <div class="queue-container">
                     <h3>UR7e Queue Size: {{ queue.ur7e|length }} groups</h3>
                     {% if queue.ur7e %}
                     <table class="queue-table">
-                        {% for person in queue.ur7e %}
-                        <tr>
-                            <td>{{ loop.index }}. {{ person.name }}</td>
-                        </tr>
-                        {% endfor %}
+                        <thead>
+                            <tr>
+                                <th scope="col">Position</th>
+                                <th scope="col">Group Name</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for person in queue.ur7e %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ person.name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
                     </table>
                     {% endif %}
                 </div>
-                <button class="queue-button">Add to UR7e Queue</button>
+                <button class="queue-button" aria-label="Add to UR7e Queue">Add to UR7e Queue</button>
                 {% endif %}
             </div>
         </div>
     </div>
+
+    <!-- Siteimprove Analytics Script -->
+    <script async src="https://siteimproveanalytics.com/js/siteanalyze_6294756.js"></script>
 </body>
 </html>
