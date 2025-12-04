@@ -41,7 +41,8 @@ WorkingDirectory=/home/ff/ee106a/lab-availability-site
 ExecStart=/home/ff/ee106a/venvs/testing/bin/python3 /home/ff/ee106a/lab-availability-site/update_db.py
 ```
 
-Where you can see how it's running the `update_db.py` file, everytime the service is called
+Where you can see how it's running the `update_db.py` file, everytime the service is called.
+
 While it's checking the availability of all the computers, it updates a MariaDB database that comes with the apphost.
 
 ## Creating the GUI
@@ -77,6 +78,12 @@ Restart=always
 WantedBy=default.target
 ```
 
+Right now, it should be configured to run while the apphost is running, and if the server ever restarts, it should start up with the apphost. 
+
+If you make any changes to the Flask application, you'll want to restart the service, with 
+```bash
+systemctl --user restart lab_availability.service
+```
 ### Notes
 
 - I should definitely rename the virtual environment to something that's not "testing"
