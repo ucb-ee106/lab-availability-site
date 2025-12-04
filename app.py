@@ -213,7 +213,7 @@ def get_lab_status():
         'ur7es_available': ur7es_available,
         'show_ur7e_queue': show_ur7e_queue,
         'show_turtlebot_queue': show_turtlebot_queue,
-        'alt_text': generate_lab_alt_text(station_data)
+        'alt_text': generate_lab_alt_text(station_data),
         'show_book_robot': show_book_robot
     }
 
