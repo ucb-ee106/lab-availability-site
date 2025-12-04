@@ -46,6 +46,15 @@
             justify-content: space-between;
         }
         @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 15px;
+                margin: 0;
+                width: 100%;
+                box-sizing: border-box;
+            }
             .header {
                 flex-direction: column;
                 align-items: flex-start;
@@ -54,15 +63,28 @@
             .header > div {
                 width: 100%;
             }
+            .header h1 {
+                font-size: 1.5em;
+            }
             .github-link {
                 align-self: flex-end;
             }
             .readme-content {
                 font-size: 0.95em;
+                max-width: 100%;
+                overflow-x: hidden;
             }
             .readme-content pre {
-                font-size: 0.85em;
+                font-size: 0.75em;
                 padding: 10px;
+                overflow-x: auto;
+                max-width: 100%;
+            }
+            .readme-content h1 {
+                font-size: 1.5em;
+            }
+            .readme-content h2 {
+                font-size: 1.2em;
             }
         }
     </style>
