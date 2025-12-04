@@ -225,6 +225,14 @@ def index():
     return render_template('index.html', lab_status=lab_status, queue=queue)
 
 
+@app.route('/about')
+def about():
+    """Display website_about.md content on the about page."""
+    with open('website_about.md', 'r') as f:
+        readme_content = f.read()
+    return render_template('about.html', readme_content=readme_content)
+
+
 @app.route('/lab_room.svg')
 def get_svg():
     """Serve the SVG with dynamically updated desk colors based on configured data source."""

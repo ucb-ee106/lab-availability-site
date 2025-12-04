@@ -14,7 +14,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>Cory 105 Lab Availability</h1>
+        <div class="header">
+            <h1>Cory 105 Lab Availability</h1>
+            <a href="/about" class="about-link">About</a>
+        </div>
         <div class="main-content">
             <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}">
             <div>
