@@ -26,6 +26,11 @@
                         {{ lab_status.ur7es_available }} UR7e{{ 's' if lab_status.ur7es_available != 1 }} Open
                     </div>
                 </div>
+                {% if lab_status.show_book_robot %}
+                <a href="https://calendar.google.com/calendar/u/0/appointments/AcZssZ0TeYC8D4SlTbF-FSihP5FtNVmiGVKQbRVYQC8=" target="_blank" style="text-decoration: none;">
+                    <button class="queue-button">Book Robot</button>
+                </a>
+                {% endif %}
                 {% if lab_status.show_turtlebot_queue %}
                 <div class="queue-container">
                     <h3>Turtlebot Queue Size: {{ queue.turtlebot|length }} groups</h3>

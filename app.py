@@ -203,6 +203,9 @@ def get_lab_status():
     show_ur7e_queue = (state == STATE_LAB_OH and ur7es_available == 0)
     show_turtlebot_queue = (state == STATE_LAB_OH and turtlebots_available == 0)
 
+    # Show book robot button only when lab is open
+    show_book_robot = (state == STATE_OPEN)
+
     return {
         'state': state,
         'color': STATE_COLORS[state],
@@ -211,6 +214,7 @@ def get_lab_status():
         'show_ur7e_queue': show_ur7e_queue,
         'show_turtlebot_queue': show_turtlebot_queue,
         'alt_text': generate_lab_alt_text(station_data)
+        'show_book_robot': show_book_robot
     }
 
 
