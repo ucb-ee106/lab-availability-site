@@ -1,11 +1,19 @@
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, request, jsonify, session
 import re
 import pymysql
 import csv
 import os
 import sys
+from google.oauth2 import id_token
+from google.auth.transport import requests
+import secrets
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+# Google OAuth configuration
+GOOGLE_CLIENT_ID = "22576242210-5dqoo2haju5f7t0qf5cnuq2hpbhstjpe.apps.googleusercontent.com"
+ALLOWED_DOMAIN = "berkeley.edu"
 
 # Lab states
 STATE_OPEN = 'Open'
@@ -242,6 +250,111 @@ def get_svg():
         svg_content = re.sub(pattern, rf'\1{color}\2', svg_content)
 
     return Response(svg_content, mimetype='image/svg+xml')
+
+
+@app.route('/api/auth/google', methods=['POST'])
+def google_auth():
+    """Verify Google ID token and create session for berkeley.edu users."""
+    try:
+        token = request.json.get('credential')
+
+        # Verify the token
+        idinfo = id_token.verify_oauth2_token(
+            token,
+            requests.Request(),
+            GOOGLE_CLIENT_ID
+        )
+
+        # Verify the domain
+        email = idinfo.get('email')
+        if not email.endswith(f'@{ALLOWED_DOMAIN}'):
+            return jsonify({'error': 'Only berkeley.edu accounts are allowed'}), 403
+
+        # Create session
+        session['user'] = {
+            'email': email,
+            'name': idinfo.get('name'),
+            'picture': idinfo.get('picture')
+        }
+
+        return jsonify({
+            'success': True,
+            'user': session['user']
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """Clear user session."""
+    session.pop('user', None)
+    return jsonify({'success': True})
+
+
+@app.route('/api/auth/user')
+def get_current_user():
+    """Get current authenticated user."""
+    if 'user' in session:
+        return jsonify(session['user'])
+    return jsonify({'error': 'Not authenticated'}), 401
+
+
+@app.route('/api/queue/add', methods=['POST'])
+def add_to_queue():
+    """Add authenticated user to specified queue."""
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    data = request.json
+    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+
+    if queue_type not in ['turtlebot', 'ur7e']:
+        return jsonify({'error': 'Invalid queue type'}), 400
+
+    user = session['user']
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+
+    # Check if user is already in queue
+    existing_entries = []
+    file_exists = os.path.exists(csv_path)
+
+    if file_exists:
+        try:
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                existing_entries = list(reader)
+
+            # Check for duplicate
+            for entry in existing_entries:
+                if entry['email'] == user['email']:
+                    return jsonify({'error': 'You are already in this queue'}), 400
+
+        except Exception as e:
+            return jsonify({'error': 'Error reading queue'}), 500
+    else:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+
+    # Add user to queue
+    mode = 'a' if file_exists else 'w'
+    with open(csv_path, mode, newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+
+        # Write header if file is new or empty
+        if not file_exists or len(existing_entries) == 0:
+            writer.writeheader()
+
+        writer.writerow({
+            'name': user['name'],
+            'email': user['email']
+        })
+
+    return jsonify({
+        'success': True,
+        'message': f'Added to {queue_type} queue'
+    })
 
 
 if __name__ == '__main__':
