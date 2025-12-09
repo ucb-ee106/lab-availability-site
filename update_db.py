@@ -48,6 +48,9 @@ def main():
     for station in range(1, 12):
         print(f"Checking c105-{station}...")
         occ = check_station(station)
+        if station == 2:
+            # Station 2 perma-down
+            occ = True
         results.append((station, occ))
 
     # Connect to MariaDB

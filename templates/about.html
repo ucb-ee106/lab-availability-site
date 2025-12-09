@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About - Cory 105 Lab Availability</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        .readme-content {
+            max-width: 800px;
+            line-height: 1.6;
+        }
+        .readme-content h1 {
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        .readme-content h2 {
+            margin-top: 30px;
+            color: #5D576B;
+        }
+        .readme-content code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        .readme-content pre {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .readme-content pre code {
+            background: none;
+            padding: 0;
+        }
+        .github-link {
+            color: #5D576B;
+            transition: color 0.2s;
+        }
+        .github-link:hover {
+            color: #726C80;
+        }
+        .header {
+            justify-content: space-between;
+        }
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 15px;
+                margin: 0;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+            .header > div {
+                width: 100%;
+            }
+            .header h1 {
+                font-size: 1.5em;
+            }
+            .github-link {
+                align-self: flex-end;
+            }
+            .readme-content {
+                font-size: 0.95em;
+                max-width: 100%;
+                overflow-x: hidden;
+            }
+            .readme-content pre {
+                font-size: 0.75em;
+                padding: 10px;
+                overflow-x: auto;
+                max-width: 100%;
+            }
+            .readme-content h1 {
+                font-size: 1.5em;
+            }
+            .readme-content h2 {
+                font-size: 1.2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <h1>About</h1>
+                <a href="/" class="about-link">Home</a>
+            </div>
+            <a href="https://github.com/ucb-ee106/lab-availability-site" target="_blank" class="github-link" aria-label="View on GitHub">
+                <svg width="32" height="32" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                </svg>
+            </a>
+        </div>
+        <div id="readme" class="readme-content"></div>
+    </div>
+
+    <script>
+        const markdown = {{ readme_content|tojson }};
+        document.getElementById('readme').innerHTML = marked.parse(markdown);
+    </script>
+
+    <!-- Siteimprove Analytics Script -->
+    <script async src="https://siteimproveanalytics.com/js/siteanalyze_6294756.js"></script>
+</body>
+</html>
