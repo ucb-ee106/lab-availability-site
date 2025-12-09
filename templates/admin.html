@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cory 105 Lab Availability</title>
+    <title>Cory 105 Admin Page</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
@@ -17,14 +17,13 @@
     <div class="container">
         <div class="header-container">
             <div class="header-left">
-                <h1>Cory 105 Lab Availability</h1>
+                <h1>Cory 105 Admin Page</h1>
                 <a href="/about" class="about-link">About</a>
+                <a href="/admin/upload-calendar" class="about-link">Add Course Calendar</a>
             </div>
             <div class="header-right">
                 <!-- User status indicator -->
                 <div id="user-status" class="user-status"></div>
-                <!-- Admin sign-in button (always available) -->
-                <a href="/admin" class="signin-button">Admin Sign In</a>
             </div>
         </div>
 

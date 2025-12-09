@@ -81,6 +81,7 @@ async function logout() {
 // Update user status indicator
 function updateUserStatus() {
     const userStatus = document.getElementById('user-status');
+
     if (!userStatus) return;
 
     if (currentUser) {
@@ -105,15 +106,27 @@ function showSignInModal() {
     const buttonContainer = document.getElementById('google-signin-button');
     buttonContainer.innerHTML = ''; // Clear previous button
 
-    google.accounts.id.renderButton(
-        buttonContainer,
-        {
-            theme: 'outline',
-            size: 'large',
-            text: 'signin_with',
-            width: 300
-        }
-    );
+    // Check if Google Sign-In is loaded
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+        console.error('Google Sign-In library not loaded');
+        buttonContainer.innerHTML = '<p style="color: red;">Error: Sign-in unavailable. Please refresh the page.</p>';
+        return;
+    }
+
+    try {
+        google.accounts.id.renderButton(
+            buttonContainer,
+            {
+                theme: 'outline',
+                size: 'large',
+                text: 'signin_with',
+                width: 300
+            }
+        );
+    } catch (error) {
+        console.error('Error rendering Google Sign-In button:', error);
+        buttonContainer.innerHTML = '<p style="color: red;">Error loading sign-in button. Please refresh the page.</p>';
+    }
 }
 
 // Close sign-in modal
@@ -183,16 +196,40 @@ function showMessage(message, type) {
     }, 3000);
 }
 
+// Initialize Google Sign-In when library is ready
+function initGoogleSignIn() {
+    if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+        google.accounts.id.initialize({
+            client_id: '22576242210-5dqoo2haju5f7t0qf5cnuq2hpbhstjpe.apps.googleusercontent.com',
+            callback: handleCredentialResponse,
+            auto_select: false
+        });
+
+        initializeGoogleSignIn();
+    } else {
+        console.error('Google Sign-In library not loaded');
+    }
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize Google Sign-In
-    google.accounts.id.initialize({
-        client_id: '22576242210-5dqoo2haju5f7t0qf5cnuq2hpbhstjpe.apps.googleusercontent.com',
-        callback: handleCredentialResponse,
-        auto_select: false
-    });
-
-    initializeGoogleSignIn();
+    // Wait for Google Sign-In library to load
+    if (typeof google !== 'undefined' && google.accounts) {
+        initGoogleSignIn();
+    } else {
+        // Poll for Google library to be ready
+        let attempts = 0;
+        const checkGoogle = setInterval(() => {
+            attempts++;
+            if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+                clearInterval(checkGoogle);
+                initGoogleSignIn();
+            } else if (attempts > 50) { // Stop after 5 seconds
+                clearInterval(checkGoogle);
+                console.error('Google Sign-In library failed to load');
+            }
+        }, 100);
+    }
 
     // Close modal when clicking outside of it
     window.onclick = function(event) {

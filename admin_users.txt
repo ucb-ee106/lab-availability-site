@@ -1,0 +1,3 @@
+# Admin Users - one email per line
+# Add berkeley.edu email addresses that should have admin access
+danielmunicio@berkeley.edu

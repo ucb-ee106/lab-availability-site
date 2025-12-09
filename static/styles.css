@@ -128,12 +128,43 @@ svg, img {
     gap: 20px;
 }
 
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
 .header-container h1 {
     margin: 0;
 }
 
 .user-status {
     flex-shrink: 0;
+}
+
+.signin-button {
+    color: #5D576B;
+    background: transparent;
+    text-decoration: none;
+    font-size: 0.9em;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 15px;
+    border: 2px solid #5D576B;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.signin-button:hover {
+    background: #5D576B;
+    color: white;
 }
 
 /* Modal Styles */
@@ -288,6 +319,17 @@ svg, img {
         flex-direction: column;
         align-items: flex-start;
         gap: 10px;
+    }
+
+    .header-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .header-right {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .main-content {

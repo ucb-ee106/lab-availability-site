@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Access Required</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        .unauthorized-container {
+            text-align: center;
+            padding: 60px 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .unauthorized-container h1 {
+            color: #5D576B;
+            margin-bottom: 20px;
+        }
+
+        .unauthorized-container p {
+            color: #666;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #5D576B;
+            text-decoration: none;
+            font-size: 1em;
+            font-weight: 500;
+            padding: 12px 24px;
+            border-radius: 15px;
+            border: 2px solid #5D576B;
+            transition: all 0.2s;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            background: #5D576B;
+            color: white;
+        }
+
+        .signin-section {
+            margin-top: 40px;
+            padding-top: 40px;
+            border-top: 1px solid #ddd;
+        }
+
+        #google-signin-button {
+            display: inline-block;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="unauthorized-container">
+            <h1>🔒 Admin Access Required</h1>
+            <p>{{ message }}</p>
+
+            {% if show_signin %}
+            <div class="signin-section">
+                <h2>Sign in to continue</h2>
+                <p>Please sign in with your berkeley.edu account</p>
+                <div id="google-signin-button"></div>
+            </div>
+            {% endif %}
+
+            <a href="/" class="back-link">← Back to Lab Availability</a>
+        </div>
+    </div>
+
+    <!-- Siteimprove Analytics Script -->
+    <script async src="https://siteimproveanalytics.com/js/siteanalyze_6294756.js"></script>
+
+    <!-- Authentication Script -->
+    <script src="{{ url_for('static', filename='auth.js') }}"></script>
+
+    {% if show_signin %}
+    <script>
+        // Override handleCredentialResponse to not show error message on admin page
+        const originalHandleCredentialResponse = handleCredentialResponse;
+        handleCredentialResponse = async function(response) {
+            try {
+                const result = await fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        credential: response.credential
+                    })
+                });
+
+                const data = await result.json();
+
+                if (result.ok) {
+                    // Successfully signed in, reload the page to check admin access
+                    window.location.reload();
+                } else {
+                    showMessage(data.error || 'Authentication failed', 'error');
+                }
+            } catch (error) {
+                console.error('Error during authentication:', error);
+                showMessage('Authentication error. Please try again.', 'error');
+            }
+        };
+
+        // Auto-render sign-in button when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Wait a bit for Google library to load
+            setTimeout(() => {
+                if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+                    const buttonContainer = document.getElementById('google-signin-button');
+                    google.accounts.id.renderButton(
+                        buttonContainer,
+                        {
+                            theme: 'outline',
+                            size: 'large',
+                            text: 'signin_with',
+                            width: 300
+                        }
+                    );
+                }
+            }, 500);
+        });
+    </script>
+    {% endif %}
+</body>
+</html>

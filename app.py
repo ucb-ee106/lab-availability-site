@@ -1,4 +1,4 @@
-from flask import Flask, render_template, Response, request, jsonify, session
+from flask import Flask, render_template, Response, request, jsonify, session, redirect, url_for
 import re
 import pymysql
 import csv
@@ -7,6 +7,7 @@ import sys
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import secrets
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -41,6 +42,12 @@ UR7E_STATIONS = {6, 7, 8, 9, 10}
 DATA_SOURCE = os.environ.get('DATA_SOURCE', 'csv').lower()
 QUEUE_UR7E_CSV_PATH = 'csv/queue_ur7e.csv'
 QUEUE_TURTLEBOT_CSV_PATH = 'csv/queue_turtlebot.csv'
+ADMIN_USERS_FILE = 'admin_users.txt'
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'ics'}
+
+# Create upload folder if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Parse command line arguments to select appropriate CSV file and state
 STATE_OVERRIDE = None
@@ -191,6 +198,30 @@ def generate_lab_alt_text(station_data):
 
     return " ".join(parts)
 
+def allowed_file(filename):
+    """Check if file has an allowed extension."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def is_admin_user(email):
+    """Check if the given email is in the admin users list."""
+    if not os.path.exists(ADMIN_USERS_FILE):
+        return False
+
+    try:
+        with open(ADMIN_USERS_FILE, 'r') as f:
+            admin_emails = set()
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if line and not line.startswith('#'):
+                    admin_emails.add(line.lower())
+            return email.lower() in admin_emails
+    except Exception as e:
+        print(f"Error reading admin users file: {e}")
+        return False
+
+
 def get_lab_status():
     """Calculate lab status from configured data source."""
     turtlebots_available = 0
@@ -239,6 +270,69 @@ def about():
     with open('website_about.md', 'r') as f:
         readme_content = f.read()
     return render_template('about.html', readme_content=readme_content)
+
+
+@app.route('/admin')
+def admin():
+    """Display admin page - requires authentication and admin privileges."""
+    # Check if user is authenticated
+    if 'user' not in session:
+        return render_template('admin_unauthorized.html',
+                             message='Please sign in to access the admin page.',
+                             show_signin=True)
+
+    # Check if user is an admin
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return render_template('admin_unauthorized.html',
+                             message='Sorry! You do not have admin access. Please email Daniel Municio for admin access.',
+                             show_signin=False)
+
+    # User is authenticated and is an admin
+    lab_status = get_lab_status()
+    queue = get_queue_data()
+    return render_template('admin.html', lab_status=lab_status, queue=queue)
+
+
+@app.route('/admin/upload-calendar', methods=['GET', 'POST'])
+def upload_calendar():
+    """Upload course calendar ICS file - admin only."""
+    # Check if user is authenticated
+    if 'user' not in session:
+        return redirect(url_for('admin'))
+
+    # Check if user is an admin
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return redirect(url_for('admin'))
+
+    if request.method == 'POST':
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+
+        file = request.files['file']
+
+        # Check if file was selected
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        # Check if file is allowed
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            # Save with a consistent name for the course calendar
+            filepath = os.path.join(UPLOAD_FOLDER, 'course_calendar.ics')
+            file.save(filepath)
+            return jsonify({
+                'success': True,
+                'message': 'Course calendar uploaded successfully!',
+                'filename': filename
+            })
+        else:
+            return jsonify({'error': 'Invalid file type. Please upload an ICS file.'}), 400
+
+    # GET request - show upload form
+    return render_template('upload_calendar.html')
 
 
 @app.route('/lab_room.svg')
