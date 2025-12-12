@@ -285,6 +285,119 @@ function initGoogleSignIn() {
     }
 }
 
+// Drag and drop variables
+let draggedRow = null;
+let draggedOverRow = null;
+
+// Initialize drag and drop for queue rows
+function initializeDragAndDrop() {
+    const queueRows = document.querySelectorAll('.queue-row');
+
+    queueRows.forEach(row => {
+        row.addEventListener('dragstart', handleDragStart);
+        row.addEventListener('dragover', handleDragOver);
+        row.addEventListener('drop', handleDrop);
+        row.addEventListener('dragenter', handleDragEnter);
+        row.addEventListener('dragleave', handleDragLeave);
+        row.addEventListener('dragend', handleDragEnd);
+    });
+}
+
+function handleDragStart(e) {
+    draggedRow = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', this.innerHTML);
+}
+
+function handleDragOver(e) {
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+}
+
+function handleDragEnter(e) {
+    // Only highlight if it's a different row in the same queue
+    if (this !== draggedRow &&
+        this.dataset.queueType === draggedRow.dataset.queueType) {
+        this.classList.add('drag-over');
+        draggedOverRow = this;
+    }
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    if (e.stopPropagation) {
+        e.stopPropagation();
+    }
+
+    // Make sure we're dropping on a valid row in the same queue
+    if (draggedRow !== this &&
+        this.dataset.queueType === draggedRow.dataset.queueType) {
+
+        const queueType = this.dataset.queueType;
+        const email = draggedRow.dataset.email;
+        const newIndex = parseInt(this.dataset.index);
+
+        // Call API to reposition
+        repositionInQueue(queueType, email, newIndex);
+    }
+
+    return false;
+}
+
+function handleDragEnd(e) {
+    // Remove all drag-related classes
+    const queueRows = document.querySelectorAll('.queue-row');
+    queueRows.forEach(row => {
+        row.classList.remove('dragging');
+        row.classList.remove('drag-over');
+    });
+
+    draggedRow = null;
+    draggedOverRow = null;
+}
+
+// Reposition in queue via API
+async function repositionInQueue(queueType, email, newIndex) {
+    if (!currentUser) {
+        showMessage('Please sign in first', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/queue/reposition', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                queue_type: queueType,
+                email: email,
+                new_index: newIndex
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessage(data.message, 'success');
+            // Reload page to show updated queue
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showMessage(data.error || 'Failed to reorder queue', 'error');
+        }
+    } catch (error) {
+        console.error('Error reordering queue:', error);
+        showMessage('Error reordering queue. Please try again.', 'error');
+    }
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     // Wait for Google Sign-In library to load
@@ -312,4 +425,7 @@ document.addEventListener('DOMContentLoaded', () => {
             closeSignInModal();
         }
     };
+
+    // Initialize drag and drop for queue management
+    initializeDragAndDrop();
 });

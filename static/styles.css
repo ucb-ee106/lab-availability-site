@@ -143,6 +143,37 @@ body {
     background: #c82333;
 }
 
+/* Drag and Drop Styles */
+.queue-row {
+    cursor: move;
+    transition: all 0.2s;
+    background: transparent;
+}
+
+.queue-row:hover {
+    background: rgba(93, 87, 107, 0.05);
+}
+
+.queue-row.dragging {
+    opacity: 0.4;
+    background: rgba(93, 87, 107, 0.1);
+}
+
+.queue-row.drag-over {
+    border-top: 3px solid #5D576B;
+    background: rgba(93, 87, 107, 0.1);
+}
+
+.drag-handle {
+    color: #999;
+    font-weight: bold;
+    cursor: move;
+    user-select: none;
+    text-align: center;
+    font-size: 1.2em;
+    padding: 5px 0;
+}
+
 .queue-button {
     background: #5D576B;
     color: white;

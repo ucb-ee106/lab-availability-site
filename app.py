@@ -592,6 +592,78 @@ def reorder_queue():
         return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
 
 
+@app.route('/api/queue/reposition', methods=['POST'])
+def reposition_in_queue():
+    """Move a queue entry to a specific position (admin only)."""
+    # Check authentication
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    # Check admin privileges
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.json
+    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    email = data.get('email')
+    new_index = data.get('new_index')  # 0-based index
+
+    if queue_type not in ['turtlebot', 'ur7e']:
+        return jsonify({'error': 'Invalid queue type'}), 400
+
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+
+    if new_index is None or not isinstance(new_index, int) or new_index < 0:
+        return jsonify({'error': 'Valid new_index is required'}), 400
+
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+
+    # Read current queue
+    if not os.path.exists(csv_path):
+        return jsonify({'error': 'Queue does not exist'}), 404
+
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            entries = list(reader)
+
+        # Find the entry to move
+        old_index = None
+        entry_to_move = None
+        for i, entry in enumerate(entries):
+            if entry['email'] == email:
+                old_index = i
+                entry_to_move = entry
+                break
+
+        if old_index is None:
+            return jsonify({'error': 'User not found in queue'}), 404
+
+        # Validate new_index
+        if new_index >= len(entries):
+            new_index = len(entries) - 1
+
+        # Remove from old position and insert at new position
+        entries.pop(old_index)
+        entries.insert(new_index, entry_to_move)
+
+        # Write back to file
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+            writer.writeheader()
+            writer.writerows(entries)
+
+        return jsonify({
+            'success': True,
+            'message': f'Queue order updated'
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+
+
 if __name__ == '__main__':
     app.run(host="127.0.0.1", port=5000)
 
