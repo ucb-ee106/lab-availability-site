@@ -53,6 +53,7 @@
                             <tr>
                                 <th scope="col">Position</th>
                                 <th scope="col">Group Name</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -60,6 +61,13 @@
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ person.name }}</td>
+                                <td>
+                                    <div class="queue-actions">
+                                        <button class="queue-action-btn" onclick="moveInQueue('turtlebot', '{{ person.email }}', 'up')" title="Move up" {% if loop.first %}disabled{% endif %}>↑</button>
+                                        <button class="queue-action-btn" onclick="moveInQueue('turtlebot', '{{ person.email }}', 'down')" title="Move down" {% if loop.last %}disabled{% endif %}>↓</button>
+                                        <button class="queue-action-btn remove-btn" onclick="removeFromQueue('turtlebot', '{{ person.email }}', '{{ person.name }}')" title="Remove">✕</button>
+                                    </div>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -77,6 +85,7 @@
                             <tr>
                                 <th scope="col">Position</th>
                                 <th scope="col">Group Name</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -84,6 +93,13 @@
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ person.name }}</td>
+                                <td>
+                                    <div class="queue-actions">
+                                        <button class="queue-action-btn" onclick="moveInQueue('ur7e', '{{ person.email }}', 'up')" title="Move up" {% if loop.first %}disabled{% endif %}>↑</button>
+                                        <button class="queue-action-btn" onclick="moveInQueue('ur7e', '{{ person.email }}', 'down')" title="Move down" {% if loop.last %}disabled{% endif %}>↓</button>
+                                        <button class="queue-action-btn remove-btn" onclick="removeFromQueue('ur7e', '{{ person.email }}', '{{ person.name }}')" title="Remove">✕</button>
+                                    </div>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>

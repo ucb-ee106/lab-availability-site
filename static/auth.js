@@ -177,6 +177,80 @@ async function addToQueueDirect(queueType) {
     }
 }
 
+// Remove from queue function (admin only)
+async function removeFromQueue(queueType, email, name) {
+    if (!currentUser) {
+        showMessage('Please sign in first', 'error');
+        return;
+    }
+
+    // Confirm removal
+    if (!confirm(`Are you sure you want to remove ${name} from the ${queueType} queue?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/queue/remove', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                queue_type: queueType,
+                email: email
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessage(data.message, 'success');
+            // Reload page to show updated queue
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showMessage(data.error || 'Failed to remove from queue', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing from queue:', error);
+        showMessage('Error removing from queue. Please try again.', 'error');
+    }
+}
+
+// Move in queue function (admin only)
+async function moveInQueue(queueType, email, direction) {
+    if (!currentUser) {
+        showMessage('Please sign in first', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/queue/reorder', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                queue_type: queueType,
+                email: email,
+                direction: direction
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessage(data.message, 'success');
+            // Reload page to show updated queue
+            setTimeout(() => location.reload(), 800);
+        } else {
+            showMessage(data.error || 'Failed to reorder queue', 'error');
+        }
+    } catch (error) {
+        console.error('Error reordering queue:', error);
+        showMessage('Error reordering queue. Please try again.', 'error');
+    }
+}
+
 // Show message to user
 function showMessage(message, type) {
     // Remove any existing messages

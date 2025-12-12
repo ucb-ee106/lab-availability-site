@@ -463,6 +463,135 @@ def add_to_queue():
     })
 
 
+@app.route('/api/queue/remove', methods=['POST'])
+def remove_from_queue():
+    """Remove a user from specified queue (admin only)."""
+    # Check authentication
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    # Check admin privileges
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.json
+    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    email_to_remove = data.get('email')
+
+    if queue_type not in ['turtlebot', 'ur7e']:
+        return jsonify({'error': 'Invalid queue type'}), 400
+
+    if not email_to_remove:
+        return jsonify({'error': 'Email is required'}), 400
+
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+
+    # Read current queue
+    if not os.path.exists(csv_path):
+        return jsonify({'error': 'Queue does not exist'}), 404
+
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            entries = list(reader)
+
+        # Filter out the entry to remove
+        original_count = len(entries)
+        entries = [e for e in entries if e['email'] != email_to_remove]
+
+        if len(entries) == original_count:
+            return jsonify({'error': 'User not found in queue'}), 404
+
+        # Write back to file
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+            writer.writeheader()
+            writer.writerows(entries)
+
+        return jsonify({
+            'success': True,
+            'message': f'Removed from {queue_type} queue'
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+
+
+@app.route('/api/queue/reorder', methods=['POST'])
+def reorder_queue():
+    """Move a queue entry up or down (admin only)."""
+    # Check authentication
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    # Check admin privileges
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.json
+    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    email = data.get('email')
+    direction = data.get('direction')  # 'up' or 'down'
+
+    if queue_type not in ['turtlebot', 'ur7e']:
+        return jsonify({'error': 'Invalid queue type'}), 400
+
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+
+    if direction not in ['up', 'down']:
+        return jsonify({'error': 'Invalid direction'}), 400
+
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+
+    # Read current queue
+    if not os.path.exists(csv_path):
+        return jsonify({'error': 'Queue does not exist'}), 404
+
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            entries = list(reader)
+
+        # Find the index of the entry to move
+        index = None
+        for i, entry in enumerate(entries):
+            if entry['email'] == email:
+                index = i
+                break
+
+        if index is None:
+            return jsonify({'error': 'User not found in queue'}), 404
+
+        # Perform the swap
+        if direction == 'up':
+            if index == 0:
+                return jsonify({'error': 'Already at the top of the queue'}), 400
+            # Swap with previous entry
+            entries[index], entries[index - 1] = entries[index - 1], entries[index]
+        else:  # down
+            if index == len(entries) - 1:
+                return jsonify({'error': 'Already at the bottom of the queue'}), 400
+            # Swap with next entry
+            entries[index], entries[index + 1] = entries[index + 1], entries[index]
+
+        # Write back to file
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+            writer.writeheader()
+            writer.writerows(entries)
+
+        return jsonify({
+            'success': True,
+            'message': f'Queue order updated'
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+
+
 if __name__ == '__main__':
     app.run(host="127.0.0.1", port=5000)
 

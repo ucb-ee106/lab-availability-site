@@ -97,6 +97,52 @@ body {
     font-size: 0.9em;
 }
 
+.queue-table th {
+    text-align: left;
+    font-weight: 600;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #ccc;
+}
+
+/* Queue Action Buttons */
+.queue-actions {
+    display: flex;
+    gap: 5px;
+    justify-content: flex-start;
+}
+
+.queue-action-btn {
+    background: #5D576B;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 28px;
+    font-weight: bold;
+}
+
+.queue-action-btn:hover:not(:disabled) {
+    background: #726C80;
+    transform: scale(1.05);
+}
+
+.queue-action-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.queue-action-btn.remove-btn {
+    background: #dc3545;
+}
+
+.queue-action-btn.remove-btn:hover {
+    background: #c82333;
+}
+
 .queue-button {
     background: #5D576B;
     color: white;
