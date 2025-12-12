@@ -191,6 +191,107 @@ body {
     background: #726C80;
 }
 
+/* Manual Override Styles */
+.override-container {
+    background: #E8E8E8;
+    border-radius: 20px;
+    padding: 20px;
+    margin-top: 20px;
+}
+
+.override-container h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.1em;
+    font-weight: bold;
+}
+
+.override-description {
+    margin: 0 0 20px 0;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.override-section {
+    margin-bottom: 20px;
+}
+
+.override-section:last-child {
+    margin-bottom: 0;
+}
+
+.override-section h4 {
+    margin: 0 0 12px 0;
+    font-size: 1em;
+    font-weight: 600;
+    color: #333;
+}
+
+.override-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px;
+}
+
+.override-item {
+    background: white;
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.station-label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+    font-size: 0.95em;
+}
+
+.override-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.override-btn {
+    flex: 1;
+    padding: 6px 10px;
+    border: 2px solid #ddd;
+    background: white;
+    border-radius: 6px;
+    font-size: 0.85em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #666;
+}
+
+.override-btn:hover {
+    border-color: #bbb;
+    background: #f5f5f5;
+}
+
+.override-btn.active {
+    font-weight: bold;
+}
+
+.override-available.active {
+    background: #00A676;
+    color: white;
+    border-color: #00A676;
+}
+
+.override-occupied.active {
+    background: #EB9486;
+    color: white;
+    border-color: #EB9486;
+}
+
+.override-clear.active {
+    background: #5D576B;
+    color: white;
+    border-color: #5D576B;
+}
+
 svg, img {
     max-width: 100%;
     height: auto;

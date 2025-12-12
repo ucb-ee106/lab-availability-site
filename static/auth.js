@@ -398,6 +398,115 @@ async function repositionInQueue(queueType, email, newIndex) {
     }
 }
 
+// Station override functions
+async function setOverride(station, occupied) {
+    if (!currentUser) {
+        showMessage('Please sign in first', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/station/override', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                station: station,
+                override_occupied: occupied
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessage(data.message, 'success');
+            // Update button states
+            updateOverrideButtonStates(station, occupied);
+            // Reload page to reflect changes in the SVG
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showMessage(data.error || 'Failed to set override', 'error');
+        }
+    } catch (error) {
+        console.error('Error setting override:', error);
+        showMessage('Error setting override. Please try again.', 'error');
+    }
+}
+
+async function clearOverride(station) {
+    if (!currentUser) {
+        showMessage('Please sign in first', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/station/override', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                station: station,
+                override_occupied: null
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessage(data.message, 'success');
+            // Update button states
+            updateOverrideButtonStates(station, null);
+            // Reload page to reflect changes in the SVG
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showMessage(data.error || 'Failed to clear override', 'error');
+        }
+    } catch (error) {
+        console.error('Error clearing override:', error);
+        showMessage('Error clearing override. Please try again.', 'error');
+    }
+}
+
+function updateOverrideButtonStates(station, state) {
+    const item = document.querySelector(`.override-item[data-station="${station}"]`);
+    if (!item) return;
+
+    const buttons = item.querySelectorAll('.override-btn');
+    buttons.forEach(btn => btn.classList.remove('active'));
+
+    if (state === true) {
+        item.querySelector('.override-occupied').classList.add('active');
+    } else if (state === false) {
+        item.querySelector('.override-available').classList.add('active');
+    } else {
+        item.querySelector('.override-clear').classList.add('active');
+    }
+}
+
+async function loadOverrideStates() {
+    try {
+        const response = await fetch('/api/station/overrides');
+        if (response.ok) {
+            const data = await response.json();
+            const overrides = data.overrides || {};
+
+            // Set all stations to 'Auto' (clear) by default
+            document.querySelectorAll('.override-item').forEach(item => {
+                const station = item.dataset.station;
+                if (overrides[station] !== undefined) {
+                    updateOverrideButtonStates(parseInt(station), overrides[station]);
+                } else {
+                    updateOverrideButtonStates(parseInt(station), null);
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading override states:', error);
+    }
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     // Wait for Google Sign-In library to load
@@ -428,4 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize drag and drop for queue management
     initializeDragAndDrop();
+
+    // Load current override states
+    loadOverrideStates();
 });

@@ -42,6 +42,7 @@ UR7E_STATIONS = {6, 7, 8, 9, 10}
 DATA_SOURCE = os.environ.get('DATA_SOURCE', 'csv').lower()
 QUEUE_UR7E_CSV_PATH = 'csv/queue_ur7e.csv'
 QUEUE_TURTLEBOT_CSV_PATH = 'csv/queue_turtlebot.csv'
+MANUAL_OVERRIDES_CSV_PATH = 'csv/manual_overrides.csv'
 ADMIN_USERS_FILE = 'admin_users.txt'
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'ics'}
@@ -83,8 +84,24 @@ DB_CONFIG = {
 }
 
 
+def get_manual_overrides():
+    """Get manual station overrides from CSV file."""
+    overrides = {}
+    if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
+        try:
+            with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    station = int(row['station'])
+                    override_occupied = row['override_occupied'].lower()
+                    if override_occupied in ['true', 'false']:
+                        overrides[station] = (override_occupied == 'true')
+        except Exception as e:
+            print(f"Error reading manual overrides: {e}")
+    return overrides
+
 def get_station_data():
-    """Get station data from configured source (CSV or database)."""
+    """Get station data from configured source (CSV or database), applying manual overrides."""
     if DATA_SOURCE == 'database':
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -92,8 +109,6 @@ def get_station_data():
         data = cursor.fetchall()
         cursor.close()
         conn.close()
-        return data
-
     else:  # CSV mode
         data = []
         with open(CSV_PATH, 'r') as f:
@@ -102,7 +117,16 @@ def get_station_data():
                 station_num = int(row['station'])
                 is_occupied = row['occupied'].lower() == 'true'
                 data.append((station_num, is_occupied))
-        return data
+
+    # Apply manual overrides
+    overrides = get_manual_overrides()
+    if overrides:
+        data = [
+            (station_num, overrides.get(station_num, is_occupied))
+            for station_num, is_occupied in data
+        ]
+
+    return data
 
 def determine_lab_state(total_available):
     """Determine the current lab state based on time and availability.
@@ -662,6 +686,81 @@ def reposition_in_queue():
 
     except Exception as e:
         return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+
+
+@app.route('/api/station/override', methods=['POST'])
+def set_station_override():
+    """Set or clear a manual override for a station (admin only)."""
+    # Check authentication
+    if 'user' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    # Check admin privileges
+    user_email = session['user']['email']
+    if not is_admin_user(user_email):
+        return jsonify({'error': 'Admin access required'}), 403
+
+    data = request.json
+    station = data.get('station')
+    override_occupied = data.get('override_occupied')  # True, False, or None to clear
+
+    if station is None or not isinstance(station, int):
+        return jsonify({'error': 'Valid station number is required'}), 400
+
+    if station not in TURTLEBOT_STATIONS and station not in UR7E_STATIONS:
+        return jsonify({'error': 'Invalid station number'}), 400
+
+    try:
+        # Read current overrides
+        overrides = {}
+        if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
+            with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    overrides[int(row['station'])] = row['override_occupied']
+
+        # Update or remove override
+        if override_occupied is None:
+            # Clear override
+            if station in overrides:
+                del overrides[station]
+                message = f'Cleared override for station {station}'
+            else:
+                return jsonify({'error': 'No override exists for this station'}), 404
+        else:
+            # Set override
+            if not isinstance(override_occupied, bool):
+                return jsonify({'error': 'override_occupied must be true, false, or null'}), 400
+            overrides[station] = 'true' if override_occupied else 'false'
+            message = f'Set station {station} override to {"occupied" if override_occupied else "available"}'
+
+        # Write back to file
+        with open(MANUAL_OVERRIDES_CSV_PATH, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['station', 'override_occupied'])
+            writer.writeheader()
+            for s, occupied in sorted(overrides.items()):
+                writer.writerow({'station': s, 'override_occupied': occupied})
+
+        return jsonify({
+            'success': True,
+            'message': message
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Error setting override: {str(e)}'}), 500
+
+
+@app.route('/api/station/overrides', methods=['GET'])
+def get_station_overrides():
+    """Get all current manual overrides."""
+    try:
+        overrides = get_manual_overrides()
+        return jsonify({
+            'success': True,
+            'overrides': {str(k): v for k, v in overrides.items()}
+        })
+    except Exception as e:
+        return jsonify({'error': f'Error getting overrides: {str(e)}'}), 500
 
 
 if __name__ == '__main__':

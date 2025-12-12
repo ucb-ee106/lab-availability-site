@@ -108,6 +108,112 @@
                 </div>
                 <button class="queue-button" aria-label="Add to UR7e Queue" onclick="addToQueue('ur7e')">Add to UR7e Queue</button>
                 {% endif %}
+
+                <!-- Manual Station Overrides Section -->
+                <div class="override-container">
+                    <h3>Manual Station Overrides</h3>
+                    <p class="override-description">Force specific stations to be marked as occupied or available, overriding the normal status.</p>
+
+                    <div class="override-section">
+                        <h4>Turtlebot Stations</h4>
+                        <div class="override-grid">
+                            <div class="override-item" data-station="1">
+                                <span class="station-label">Station 1</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(1, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(1, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(1)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="2">
+                                <span class="station-label">Station 2</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(2, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(2, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(2)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="3">
+                                <span class="station-label">Station 3</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(3, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(3, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(3)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="4">
+                                <span class="station-label">Station 4</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(4, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(4, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(4)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="5">
+                                <span class="station-label">Station 5</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(5, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(5, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(5)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="11">
+                                <span class="station-label">Station 11</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(11, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(11, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(11)">Auto</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="override-section">
+                        <h4>UR7e Stations</h4>
+                        <div class="override-grid">
+                            <div class="override-item" data-station="6">
+                                <span class="station-label">Station 6</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(6, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(6, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(6)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="7">
+                                <span class="station-label">Station 7</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(7, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(7, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(7)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="8">
+                                <span class="station-label">Station 8</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(8, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(8, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(8)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="9">
+                                <span class="station-label">Station 9</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(9, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(9, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(9)">Auto</button>
+                                </div>
+                            </div>
+                            <div class="override-item" data-station="10">
+                                <span class="station-label">Station 10</span>
+                                <div class="override-controls">
+                                    <button class="override-btn override-available" onclick="setOverride(10, false)">Available</button>
+                                    <button class="override-btn override-occupied" onclick="setOverride(10, true)">Occupied</button>
+                                    <button class="override-btn override-clear" onclick="clearOverride(10)">Auto</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
