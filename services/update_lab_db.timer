@@ -1,11 +1,9 @@
 [Unit]
-Description=Run update_lab_db every 5 minutes
-ConditionPathExists=/etc/is-instapphost
-
+Description=Run update_lab_db every 10 seconds (throttled to 1 min outside OH)
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=5min
+OnBootSec=10
+OnUnitActiveSec=10
 Unit=update_lab_db.service
 
 [Install]

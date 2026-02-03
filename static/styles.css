@@ -191,6 +191,14 @@ body {
     background: #726C80;
 }
 
+.queue-info {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 15px;
+    text-align: center;
+    font-style: italic;
+}
+
 /* Manual Override Styles */
 .override-container {
     background: #E8E8E8;
@@ -274,10 +282,15 @@ body {
     font-weight: bold;
 }
 
-.override-available.active {
-    background: #00A676;
+.override-clear-user {
+    background: #4A90E2;
     color: white;
-    border-color: #00A676;
+    border-color: #4A90E2;
+}
+
+.override-clear-user:hover {
+    background: #357ABD;
+    border-color: #357ABD;
 }
 
 .override-occupied.active {

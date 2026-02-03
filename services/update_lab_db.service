@@ -1,7 +1,5 @@
 [Unit]
 Description=Update Lab Availability Database
-ConditionPathExists=/etc/is-instapphost
-
 
 [Service]
 Type=oneshot

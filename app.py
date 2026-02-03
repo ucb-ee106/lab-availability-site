@@ -4,10 +4,14 @@ import pymysql
 import csv
 import os
 import sys
+from datetime import datetime, timedelta
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import secrets
 from werkzeug.utils import secure_filename
+from icalendar import Calendar
+from dateutil.rrule import rrulestr
+from dateutil import tz
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -20,19 +24,28 @@ ALLOWED_DOMAIN = "berkeley.edu"
 STATE_OPEN = 'Open'
 STATE_FULL = 'Full'
 STATE_LAB_SECTION = 'Lab Section'
+STATE_LAB_SECTION_106A = '106A Lab Section'
+STATE_LAB_SECTION_106B = '106B Lab Section'
 STATE_LAB_OH = 'Lab OH'
+STATE_LAB_OH_106A = '106A Lab OH'
+STATE_LAB_OH_106B = '106B Lab OH'
 
 # State colors
 STATE_COLORS = {
     STATE_OPEN: '#00A676',        # Green
     STATE_FULL: '#EB9486',        # Red
     STATE_LAB_SECTION: '#EB9486', # Red
-    STATE_LAB_OH: '#F3DE8A'       # Yellow
+    STATE_LAB_SECTION_106A: '#EB9486', # Red
+    STATE_LAB_SECTION_106B: '#EB9486', # Red
+    STATE_LAB_OH: '#F3DE8A',       # Yellow
+    STATE_LAB_OH_106A: '#F3DE8A',  # Yellow
+    STATE_LAB_OH_106B: '#F3DE8A'   # Yellow
 }
 
 # Desk colors (for SVG)
 GREEN = '#00A676'
 RED = '#EB9486'
+YELLOW = '#F3DE8A'  # Claimed/pending
 
 # Station groupings
 TURTLEBOT_STATIONS = {1, 2, 3, 4, 5, 11}
@@ -46,6 +59,8 @@ MANUAL_OVERRIDES_CSV_PATH = 'csv/manual_overrides.csv'
 ADMIN_USERS_FILE = 'admin_users.txt'
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'ics'}
+PENDING_CLAIMS_CSV_PATH = 'csv/pending_claims.csv'
+CALENDAR_PATH = 'uploads/course_calendar.ics'
 
 # Create upload folder if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -100,6 +115,40 @@ def get_manual_overrides():
             print(f"Error reading manual overrides: {e}")
     return overrides
 
+
+def get_claimed_stations():
+    """Get stations with active pending claims."""
+    claimed = {}
+    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
+        return claimed
+
+    try:
+        from datetime import datetime
+        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if 'station' not in row or not row['station']:
+                    continue
+
+                is_confirmed = row.get('confirmed', '').lower() == 'true'
+                expires_at = datetime.fromisoformat(row['expires_at'])
+
+                # Confirmed claims don't expire (until station is occupied)
+                # Unconfirmed claims expire after 5 min
+                if is_confirmed or expires_at > datetime.now():
+                    station = int(row['station'])
+                    time_remaining = int((expires_at - datetime.now()).total_seconds())
+                    claimed[station] = {
+                        'name': row['name'],
+                        'expires_at': row['expires_at'],
+                        'time_remaining': max(0, time_remaining),
+                        'confirmed': is_confirmed
+                    }
+    except Exception as e:
+        print(f"Error reading pending claims: {e}")
+
+    return claimed
+
 def get_station_data():
     """Get station data from configured source (CSV or database), applying manual overrides."""
     if DATA_SOURCE == 'database':
@@ -128,25 +177,129 @@ def get_station_data():
 
     return data
 
+def get_current_lab_event():
+    """
+    Check calendar and return the current event type and class.
+    Returns: dict with 'type' ('lab_oh', 'lab_section', 'maintenance', or None) and 'class' ('106A', '106B', or None)
+    """
+    if not os.path.exists(CALENDAR_PATH):
+        return {'type': None, 'class': None}
+
+    try:
+        with open(CALENDAR_PATH, 'rb') as f:
+            cal = Calendar.from_ical(f.read())
+    except Exception as e:
+        print(f"Error reading calendar: {e}")
+        return {'type': None, 'class': None}
+
+    now = datetime.now(tz.tzlocal())
+
+    for component in cal.walk():
+        if component.name != 'VEVENT':
+            continue
+
+        summary = str(component.get('summary', ''))
+        summary_lower = summary.lower()
+
+        # Determine event type
+        if 'lab oh' in summary_lower:
+            event_type = 'lab_oh'
+        elif 'lab maintenance' in summary_lower or 'maintenance' in summary_lower:
+            event_type = 'maintenance'
+        elif ('106a' in summary_lower or '106b' in summary_lower or 'c106a' in summary_lower or 'c106b' in summary_lower) and 'lab' in summary_lower:
+            event_type = 'lab_section'
+        elif ('eecs' in summary_lower and ('106a' in summary_lower or '106b' in summary_lower)):
+            event_type = 'lab_section'
+        else:
+            continue
+
+        # Determine which class
+        if '106b' in summary_lower or 'c106b' in summary_lower:
+            event_class = '106B'
+        elif '106a' in summary_lower or 'c106a' in summary_lower:
+            event_class = '106A'
+        else:
+            event_class = None
+
+        dtstart = component.get('dtstart')
+        dtend = component.get('dtend')
+
+        if dtstart is None or dtend is None:
+            continue
+
+        start = dtstart.dt
+        end = dtend.dt
+
+        # Handle all-day events
+        if not isinstance(start, datetime):
+            start = datetime.combine(start, datetime.min.time())
+            start = start.replace(tzinfo=tz.tzlocal())
+        if not isinstance(end, datetime):
+            end = datetime.combine(end, datetime.max.time())
+            end = end.replace(tzinfo=tz.tzlocal())
+
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=tz.tzlocal())
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=tz.tzlocal())
+
+        # Check for recurring events
+        rrule_prop = component.get('rrule')
+        if rrule_prop:
+            try:
+                rule = rrulestr(rrule_prop.to_ical().decode('utf-8'), dtstart=start)
+                duration = end - start
+                window_start = now - timedelta(days=1)
+                window_end = now + timedelta(days=1)
+
+                for occurrence in rule.between(window_start, window_end, inc=True):
+                    if occurrence <= now <= occurrence + duration:
+                        return {'type': event_type, 'class': event_class}
+            except Exception as e:
+                print(f"Error parsing rrule: {e}")
+
+        if start <= now <= end:
+            return {'type': event_type, 'class': event_class}
+
+    return {'type': None, 'class': None}
+
+
 def determine_lab_state(total_available):
-    """Determine the current lab state based on time and availability.
+    """Determine the current lab state based on calendar and availability.
 
     Priority:
     1. Command line state override (for testing/demo)
-    2. Lab Section (if it's section time) - TODO: Add time-based logic
-    3. Lab OH (if it's OH time) - TODO: Add time-based logic
-    4. Full (if no stations available)
-    5. Open (default)
+    2. Maintenance (if calendar says maintenance)
+    3. Lab Section (if calendar says lab section) - with class info
+    4. Lab OH (if calendar says lab OH) - with class info
+    5. Full (if no stations available)
+    6. Open (default)
     """
     # Use state override if set via command line
     if STATE_OVERRIDE is not None:
         return STATE_OVERRIDE
 
-    # TODO: Add time-based logic here
-    # Example: if is_section_time(): return STATE_LAB_SECTION
-    # Example: if is_oh_time(): return STATE_LAB_OH
+    # Check calendar for current event
+    event = get_current_lab_event()
+    event_type = event['type']
+    event_class = event['class']
 
-    # For now, just check if lab is full
+    if event_type == 'maintenance':
+        return STATE_FULL  # Treat maintenance as full/unavailable
+    elif event_type == 'lab_section':
+        if event_class == '106A':
+            return STATE_LAB_SECTION_106A
+        elif event_class == '106B':
+            return STATE_LAB_SECTION_106B
+        return STATE_LAB_SECTION
+    elif event_type == 'lab_oh':
+        if event_class == '106A':
+            return STATE_LAB_OH_106A
+        elif event_class == '106B':
+            return STATE_LAB_OH_106B
+        return STATE_LAB_OH
+
+    # No calendar event - check if lab is full
     if total_available == 0:
         return STATE_FULL
 
@@ -262,9 +415,10 @@ def get_lab_status():
     total_available = turtlebots_available + ur7es_available
     state = determine_lab_state(total_available)
 
-    # Show queues only when it's Lab OH and the specific robot type is full
-    show_ur7e_queue = (state == STATE_LAB_OH and ur7es_available == 0)
-    show_turtlebot_queue = (state == STATE_LAB_OH and turtlebots_available == 0)
+    # Show queues during Lab OH OR when that robot type is full
+    is_lab_oh = state in (STATE_LAB_OH, STATE_LAB_OH_106A, STATE_LAB_OH_106B)
+    show_ur7e_queue = is_lab_oh or (ur7es_available == 0)
+    show_turtlebot_queue = is_lab_oh or (turtlebots_available == 0)
 
     # Show book robot button only when lab is open
     show_book_robot = (state == STATE_OPEN)
@@ -314,6 +468,9 @@ def admin():
 
     # User is authenticated and is an admin
     lab_status = get_lab_status()
+    # Admin page always shows both queues for management
+    lab_status['show_turtlebot_queue'] = True
+    lab_status['show_ur7e_queue'] = True
     queue = get_queue_data()
     return render_template('admin.html', lab_status=lab_status, queue=queue)
 
@@ -364,10 +521,16 @@ def get_svg():
     """Serve the SVG with dynamically updated desk colors based on configured data source."""
     svg_path = 'static/lab_room.svg'
 
-    # Get station status
+    # Get station status and claimed stations
+    claimed_stations = get_claimed_stations()
     station_colors = {}
     for station_num, is_occupied in get_station_data():
-        color = RED if is_occupied else GREEN
+        if station_num in claimed_stations:
+            color = YELLOW  # Claimed - someone has 5 min to get there
+        elif is_occupied:
+            color = RED
+        else:
+            color = GREEN
         station_colors[str(station_num)] = color
 
     # Read the SVG file
@@ -472,8 +635,8 @@ def add_to_queue():
     with open(csv_path, mode, newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['name', 'email'])
 
-        # Write header if file is new or empty
-        if not file_exists or len(existing_entries) == 0:
+        # Write header only if file is new
+        if not file_exists:
             writer.writeheader()
 
         writer.writerow({
@@ -761,6 +924,139 @@ def get_station_overrides():
         })
     except Exception as e:
         return jsonify({'error': f'Error getting overrides: {str(e)}'}), 500
+
+
+def get_pending_claim(token):
+    """Get a pending claim by token."""
+    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
+        return None
+
+    try:
+        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row['claim_token'] == token:
+                    from datetime import datetime
+                    expires_at = datetime.fromisoformat(row['expires_at'])
+                    if expires_at > datetime.now():
+                        return row
+                    return None  # Expired
+    except Exception as e:
+        print(f"Error reading pending claims: {e}")
+
+    return None
+
+
+def delete_pending_claim(token):
+    """Delete a pending claim by token."""
+    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
+        return False
+
+    try:
+        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            claims = [row for row in reader if row['claim_token'] != token]
+
+        with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
+            writer.writeheader()
+            writer.writerows(claims)
+        return True
+    except Exception as e:
+        print(f"Error deleting pending claim: {e}")
+        return False
+
+
+def mark_claim_confirmed(token):
+    """Mark a claim as confirmed (user clicked the button)."""
+    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
+        return False
+
+    try:
+        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            claims = list(reader)
+
+        for claim in claims:
+            if claim['claim_token'] == token:
+                claim['confirmed'] = 'true'
+
+        with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
+            writer.writeheader()
+            writer.writerows(claims)
+        return True
+    except Exception as e:
+        print(f"Error marking claim confirmed: {e}")
+        return False
+
+
+def remove_from_queue_by_email(queue_type, email):
+    """Remove a user from the queue by email."""
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+
+    if not os.path.exists(csv_path):
+        return False
+
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            entries = [row for row in reader if row['email'] != email]
+
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+            writer.writeheader()
+            writer.writerows(entries)
+        return True
+    except Exception as e:
+        print(f"Error removing from queue: {e}")
+        return False
+
+
+@app.route('/claim/<token>')
+def claim_page(token):
+    """Show claim confirmation page."""
+    claim = get_pending_claim(token)
+    if not claim:
+        return render_template('claim.html', error='Invalid or expired claim link.')
+
+    # Calculate time remaining
+    from datetime import datetime
+    expires_at = datetime.fromisoformat(claim['expires_at'])
+    time_remaining = (expires_at - datetime.now()).total_seconds()
+
+    return render_template('claim.html',
+                         claim=claim,
+                         time_remaining=max(0, int(time_remaining)),
+                         token=token)
+
+
+@app.route('/api/claim/confirm', methods=['POST'])
+def confirm_claim():
+    """Confirm claim - remove from queue."""
+    data = request.json
+    token = data.get('token')
+
+    if not token:
+        return jsonify({'error': 'Token is required'}), 400
+
+    claim = get_pending_claim(token)
+    if not claim:
+        return jsonify({'error': 'Invalid or expired claim'}), 404
+
+    # Remove from BOTH queues (they got a station, no need to wait in either queue)
+    remove_from_queue_by_email('turtlebot', claim['email'])
+    remove_from_queue_by_email('ur7e', claim['email'])
+
+    # Mark claim as confirmed (don't delete - keeps station yellow until they log in)
+    mark_claim_confirmed(token)
+
+    station_display = "Turtlebot" if claim['station_type'] == 'turtlebot' else "UR7e"
+    station_num = claim.get('station', '')
+    return jsonify({
+        'success': True,
+        'message': f'Station {station_num} ({station_display}) claimed successfully! Head to the lab now.'
+    })
 
 
 if __name__ == '__main__':

@@ -1,0 +1,11 @@
+[Unit]
+Description=Lab Queue Notification Checker
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ff/ee106a/lab-availability-site
+Environment="GMAIL_SENDER=YOUR_GMAIL@gmail.com"
+Environment="GMAIL_APP_PASSWORD=YOUR_APP_PASSWORD"
+Environment="BASE_URL=https://lab.eecs106a.com"
+ExecStart=/home/ff/ee106a/venvs/testing/bin/python3 /home/ff/ee106a/lab-availability-site/check_notifications.py

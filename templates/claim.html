@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claim Station - Cory 105 Lab</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        .claim-container {
+            text-align: center;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .claim-status {
+            background: #F3DE8A;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .claim-status.error {
+            background: #EB9486;
+        }
+
+        .claim-status.success {
+            background: #00A676;
+            color: white;
+        }
+
+        .claim-status h2 {
+            margin: 0 0 15px 0;
+            font-size: 1.5em;
+        }
+
+        .station-type {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .countdown {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 20px 0;
+            font-family: monospace;
+        }
+
+        .countdown.urgent {
+            color: #dc3545;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .claim-button {
+            background: #00A676;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 20px 50px;
+            font-size: 1.3em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 20px;
+        }
+
+        .claim-button:hover:not(:disabled) {
+            background: #008f64;
+            transform: scale(1.02);
+        }
+
+        .claim-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .info-text {
+            color: #666;
+            margin-top: 20px;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #5D576B;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .error-message {
+            color: #333;
+            font-size: 1.1em;
+        }
+
+        .success-message {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-container">
+            <div class="header-left">
+                <h1>Cory 105 Lab</h1>
+            </div>
+        </div>
+
+        <div class="claim-container">
+            {% if error %}
+            <div class="claim-status error">
+                <h2>Oops!</h2>
+                <p class="error-message">{{ error }}</p>
+                <p>The claim link may have expired or already been used.</p>
+            </div>
+            <a href="/" class="back-link">Back to Lab Status</a>
+
+            {% elif claim %}
+            <div class="claim-status" id="claim-status">
+                <h2>Station {{ claim.station }} Available!</h2>
+                <div class="station-type">
+                    {% if claim.station_type == 'turtlebot' %}Turtlebot{% else %}UR7e{% endif %} - Station {{ claim.station }}
+                </div>
+                <p>Hi {{ claim.name }}, you're up!</p>
+                <div class="countdown" id="countdown">{{ '%d:%02d' | format(time_remaining // 60, time_remaining % 60) }}</div>
+                <p>Time remaining to claim</p>
+            </div>
+
+            <button class="claim-button" id="claim-btn" onclick="confirmClaim()">
+                Claim Station {{ claim.station }}
+            </button>
+
+            <p class="info-text">
+                Click the button above to confirm your station claim.<br>
+                If you don't claim within the time limit, the next person in the queue will be notified.
+            </p>
+
+            <div id="success-container" style="display: none;">
+                <div class="claim-status success">
+                    <h2>Success!</h2>
+                    <p class="success-message" id="success-message"></p>
+                </div>
+                <a href="/" class="back-link">Back to Lab Status</a>
+            </div>
+
+            {% endif %}
+        </div>
+    </div>
+
+    {% if claim %}
+    <script>
+        const token = "{{ token }}";
+        let timeRemaining = {{ time_remaining }};
+        const countdownEl = document.getElementById('countdown');
+        const claimBtn = document.getElementById('claim-btn');
+        const claimStatus = document.getElementById('claim-status');
+        const successContainer = document.getElementById('success-container');
+
+        function updateCountdown() {
+            if (timeRemaining <= 0) {
+                countdownEl.textContent = '0:00';
+                countdownEl.classList.add('urgent');
+                claimBtn.disabled = true;
+                claimBtn.textContent = 'Claim Expired';
+                return;
+            }
+
+            const minutes = Math.floor(timeRemaining / 60);
+            const seconds = timeRemaining % 60;
+            countdownEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+            // Add urgency when under 1 minute
+            if (timeRemaining <= 60) {
+                countdownEl.classList.add('urgent');
+            }
+
+            timeRemaining--;
+        }
+
+        // Update every second
+        setInterval(updateCountdown, 1000);
+
+        async function confirmClaim() {
+            claimBtn.disabled = true;
+            claimBtn.textContent = 'Claiming...';
+
+            try {
+                const response = await fetch('/api/claim/confirm', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ token: token })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Hide claim status, show success
+                    claimStatus.style.display = 'none';
+                    claimBtn.style.display = 'none';
+                    document.querySelector('.info-text').style.display = 'none';
+
+                    document.getElementById('success-message').textContent = data.message;
+                    successContainer.style.display = 'block';
+                } else {
+                    alert(data.error || 'Failed to claim station. The claim may have expired.');
+                    claimBtn.disabled = false;
+                    claimBtn.textContent = 'Claim Station';
+                }
+            } catch (error) {
+                alert('Network error. Please try again.');
+                claimBtn.disabled = false;
+                claimBtn.textContent = 'Claim Station';
+            }
+        }
+    </script>
+    {% endif %}
+</body>
+</html>

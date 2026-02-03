@@ -1,11 +1,15 @@
 // Global variables
-let currentUser = null;
+let currentUser = window.preloadedUser || null;
 let pendingQueueType = null;
 
 // Initialize Google Sign-In
 function initializeGoogleSignIn() {
-    // Check if user is already logged in
-    checkAuthStatus();
+    // Check if user is already logged in (skip if preloaded)
+    if (!currentUser) {
+        checkAuthStatus();
+    } else {
+        updateUserStatus();
+    }
 }
 
 // Check current authentication status
@@ -165,9 +169,9 @@ async function addToQueueDirect(queueType) {
         const data = await response.json();
 
         if (response.ok) {
-            showMessage(data.message, 'success');
-            // Reload page to show updated queue
-            setTimeout(() => location.reload(), 1500);
+            showMessage(data.message + '. When a station opens, you\'ll get an email. You have 5 minutes to click the confirmation link and log into the computer.', 'success');
+            // Reload page to show updated queue (longer delay so user can read the message)
+            setTimeout(() => location.reload(), 5000);
         } else {
             showMessage(data.error || 'Failed to join queue', 'error');
         }
@@ -264,10 +268,10 @@ function showMessage(message, type) {
     messageDiv.textContent = message;
     document.body.appendChild(messageDiv);
 
-    // Remove message after 3 seconds
+    // Remove message after 5 seconds
     setTimeout(() => {
         messageDiv.remove();
-    }, 3000);
+    }, 5000);
 }
 
 // Initialize Google Sign-In when library is ready
@@ -396,6 +400,12 @@ async function repositionInQueue(queueType, email, newIndex) {
         console.error('Error reordering queue:', error);
         showMessage('Error reordering queue. Please try again.', 'error');
     }
+}
+
+// Clear active user function (placeholder for future implementation)
+function clearActiveUser(station) {
+    // TODO: Implement clear active user functionality
+    showMessage('Clear Active User functionality coming soon', 'error');
 }
 
 // Station override functions
