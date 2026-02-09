@@ -1,17 +1,24 @@
 from flask import Flask, render_template, Response, request, jsonify, session, redirect, url_for
-import re
 import pymysql
 import csv
 import os
 import sys
+import time
+import hashlib
 from datetime import datetime, timedelta
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import secrets
 from werkzeug.utils import secure_filename
-from icalendar import Calendar
-from dateutil.rrule import rrulestr
-from dateutil import tz
+
+from lab_utils import (
+    TURTLEBOT_STATIONS, UR7E_STATIONS,
+    QUEUE_UR7E_CSV_PATH, QUEUE_TURTLEBOT_CSV_PATH,
+    MANUAL_OVERRIDES_CSV_PATH, PENDING_CLAIMS_CSV_PATH,
+    ADMIN_USERS_FILE, UPLOAD_FOLDER, CALENDAR_PATH,
+    DESK_REGEX,
+    get_current_lab_event, get_manual_overrides, file_lock,
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -47,20 +54,9 @@ GREEN = '#00A676'
 RED = '#EB9486'
 YELLOW = '#F3DE8A'  # Claimed/pending
 
-# Station groupings
-TURTLEBOT_STATIONS = {1, 2, 3, 4, 5, 11}
-UR7E_STATIONS = {6, 7, 8, 9, 10}
-
 # Data source configuration (csv or database)
 DATA_SOURCE = os.environ.get('DATA_SOURCE', 'csv').lower()
-QUEUE_UR7E_CSV_PATH = 'csv/queue_ur7e.csv'
-QUEUE_TURTLEBOT_CSV_PATH = 'csv/queue_turtlebot.csv'
-MANUAL_OVERRIDES_CSV_PATH = 'csv/manual_overrides.csv'
-ADMIN_USERS_FILE = 'admin_users.txt'
-UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'ics'}
-PENDING_CLAIMS_CSV_PATH = 'csv/pending_claims.csv'
-CALENDAR_PATH = 'uploads/course_calendar.ics'
 
 # Create upload folder if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -90,30 +86,26 @@ if len(sys.argv) > 1:
 else:
     CSV_PATH = 'csv/station_status.csv'
 
-# Database connection info
 DB_CONFIG = {
-    "host": "instapphost.eecs.berkeley.edu",
-    "user": "ee106a",
-    "password": "REDACTED",
-    "database": "ee106a"
+    "host": os.environ.get("DB_HOST", "instapphost.eecs.berkeley.edu"),
+    "user": os.environ.get("DB_USER", "ee106a"),
+    "password": os.environ.get("DB_PASSWORD", ""),
+    "database": os.environ.get("DB_NAME", "ee106a"),
 }
 
+# ---------------------------------------------------------------------------
+# Caches
+# ---------------------------------------------------------------------------
+# SVG cache: avoid re-reading + regex-replacing on every request
+_svg_cache = {'content': None, 'hash': None, 'time': 0}
+_SVG_CACHE_TTL = 5  # seconds
 
-def get_manual_overrides():
-    """Get manual station overrides from CSV file."""
-    overrides = {}
-    if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
-        try:
-            with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    station = int(row['station'])
-                    override_occupied = row['override_occupied'].lower()
-                    if override_occupied in ['true', 'false']:
-                        overrides[station] = (override_occupied == 'true')
-        except Exception as e:
-            print(f"Error reading manual overrides: {e}")
-    return overrides
+# About page content (rarely changes)
+_about_content = None
+
+# Admin users cache
+_admin_cache = {'emails': None, 'time': 0, 'mtime': 0}
+_ADMIN_CACHE_TTL = 60  # seconds
 
 
 def get_claimed_stations():
@@ -123,7 +115,6 @@ def get_claimed_stations():
         return claimed
 
     try:
-        from datetime import datetime
         with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -177,92 +168,6 @@ def get_station_data():
 
     return data
 
-def get_current_lab_event():
-    """
-    Check calendar and return the current event type and class.
-    Returns: dict with 'type' ('lab_oh', 'lab_section', 'maintenance', or None) and 'class' ('106A', '106B', or None)
-    """
-    if not os.path.exists(CALENDAR_PATH):
-        return {'type': None, 'class': None}
-
-    try:
-        with open(CALENDAR_PATH, 'rb') as f:
-            cal = Calendar.from_ical(f.read())
-    except Exception as e:
-        print(f"Error reading calendar: {e}")
-        return {'type': None, 'class': None}
-
-    now = datetime.now(tz.tzlocal())
-
-    for component in cal.walk():
-        if component.name != 'VEVENT':
-            continue
-
-        summary = str(component.get('summary', ''))
-        summary_lower = summary.lower()
-
-        # Determine event type
-        if 'lab oh' in summary_lower:
-            event_type = 'lab_oh'
-        elif 'lab maintenance' in summary_lower or 'maintenance' in summary_lower:
-            event_type = 'maintenance'
-        elif ('106a' in summary_lower or '106b' in summary_lower or 'c106a' in summary_lower or 'c106b' in summary_lower) and 'lab' in summary_lower:
-            event_type = 'lab_section'
-        elif ('eecs' in summary_lower and ('106a' in summary_lower or '106b' in summary_lower)):
-            event_type = 'lab_section'
-        else:
-            continue
-
-        # Determine which class
-        if '106b' in summary_lower or 'c106b' in summary_lower:
-            event_class = '106B'
-        elif '106a' in summary_lower or 'c106a' in summary_lower:
-            event_class = '106A'
-        else:
-            event_class = None
-
-        dtstart = component.get('dtstart')
-        dtend = component.get('dtend')
-
-        if dtstart is None or dtend is None:
-            continue
-
-        start = dtstart.dt
-        end = dtend.dt
-
-        # Handle all-day events
-        if not isinstance(start, datetime):
-            start = datetime.combine(start, datetime.min.time())
-            start = start.replace(tzinfo=tz.tzlocal())
-        if not isinstance(end, datetime):
-            end = datetime.combine(end, datetime.max.time())
-            end = end.replace(tzinfo=tz.tzlocal())
-
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=tz.tzlocal())
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=tz.tzlocal())
-
-        # Check for recurring events
-        rrule_prop = component.get('rrule')
-        if rrule_prop:
-            try:
-                rule = rrulestr(rrule_prop.to_ical().decode('utf-8'), dtstart=start)
-                duration = end - start
-                window_start = now - timedelta(days=1)
-                window_end = now + timedelta(days=1)
-
-                for occurrence in rule.between(window_start, window_end, inc=True):
-                    if occurrence <= now <= occurrence + duration:
-                        return {'type': event_type, 'class': event_class}
-            except Exception as e:
-                print(f"Error parsing rrule: {e}")
-
-        if start <= now <= end:
-            return {'type': event_type, 'class': event_class}
-
-    return {'type': None, 'class': None}
-
 
 def determine_lab_state(total_available):
     """Determine the current lab state based on calendar and availability.
@@ -279,7 +184,7 @@ def determine_lab_state(total_available):
     if STATE_OVERRIDE is not None:
         return STATE_OVERRIDE
 
-    # Check calendar for current event
+    # Check calendar for current event (cached in lab_utils)
     event = get_current_lab_event()
     event_type = event['type']
     event_class = event['class']
@@ -381,8 +286,23 @@ def allowed_file(filename):
 
 
 def is_admin_user(email):
-    """Check if the given email is in the admin users list."""
+    """Check if the given email is in the admin users list (cached)."""
+    global _admin_cache
+
+    now = time.time()
+
+    try:
+        mtime = os.path.getmtime(ADMIN_USERS_FILE) if os.path.exists(ADMIN_USERS_FILE) else 0
+    except OSError:
+        mtime = 0
+
+    if (_admin_cache['emails'] is not None
+            and now - _admin_cache['time'] < _ADMIN_CACHE_TTL
+            and mtime == _admin_cache['mtime']):
+        return email.lower() in _admin_cache['emails']
+
     if not os.path.exists(ADMIN_USERS_FILE):
+        _admin_cache = {'emails': set(), 'time': now, 'mtime': mtime}
         return False
 
     try:
@@ -390,10 +310,10 @@ def is_admin_user(email):
             admin_emails = set()
             for line in f:
                 line = line.strip()
-                # Skip empty lines and comments
                 if line and not line.startswith('#'):
                     admin_emails.add(line.lower())
-            return email.lower() in admin_emails
+        _admin_cache = {'emails': admin_emails, 'time': now, 'mtime': mtime}
+        return email.lower() in admin_emails
     except Exception as e:
         print(f"Error reading admin users file: {e}")
         return False
@@ -415,10 +335,9 @@ def get_lab_status():
     total_available = turtlebots_available + ur7es_available
     state = determine_lab_state(total_available)
 
-    # Show queues during Lab OH OR when that robot type is full
-    is_lab_oh = state in (STATE_LAB_OH, STATE_LAB_OH_106A, STATE_LAB_OH_106B)
-    show_ur7e_queue = is_lab_oh or (ur7es_available == 0)
-    show_turtlebot_queue = is_lab_oh or (turtlebots_available == 0)
+    # Show queues only when that robot type is full
+    show_ur7e_queue = (ur7es_available == 0)
+    show_turtlebot_queue = (turtlebots_available == 0)
 
     # Show book robot button only when lab is open
     show_book_robot = (state == STATE_OPEN)
@@ -444,10 +363,12 @@ def index():
 
 @app.route('/about')
 def about():
-    """Display website_about.md content on the about page."""
-    with open('website_about.md', 'r') as f:
-        readme_content = f.read()
-    return render_template('about.html', readme_content=readme_content)
+    """Display website_about.md content on the about page (cached)."""
+    global _about_content
+    if _about_content is None:
+        with open('website_about.md', 'r') as f:
+            _about_content = f.read()
+    return render_template('about.html', readme_content=_about_content)
 
 
 @app.route('/admin')
@@ -518,31 +439,70 @@ def upload_calendar():
 
 @app.route('/lab_room.svg')
 def get_svg():
-    """Serve the SVG with dynamically updated desk colors based on configured data source."""
-    svg_path = 'static/lab_room.svg'
+    """Serve the SVG with dynamically updated desk colors.
 
-    # Get station status and claimed stations
+    Uses pre-compiled regex patterns and a short TTL cache so that rapid
+    requests (HTML page + embedded <img>) don't duplicate work.
+    """
+    global _svg_cache
+
+    now = time.time()
+
+    # Build a fingerprint of current station state for cache invalidation
     claimed_stations = get_claimed_stations()
     station_colors = {}
     for station_num, is_occupied in get_station_data():
         if station_num in claimed_stations:
-            color = YELLOW  # Claimed - someone has 5 min to get there
+            color = YELLOW
         elif is_occupied:
             color = RED
         else:
             color = GREEN
         station_colors[str(station_num)] = color
 
-    # Read the SVG file
-    with open(svg_path, 'r') as f:
+    state_hash = hashlib.md5(str(sorted(station_colors.items())).encode()).hexdigest()
+
+    # Return cached SVG if still valid
+    if (_svg_cache['content'] is not None
+            and _svg_cache['hash'] == state_hash
+            and now - _svg_cache['time'] < _SVG_CACHE_TTL):
+        return Response(
+            _svg_cache['content'],
+            mimetype='image/svg+xml',
+            headers={'Cache-Control': 'public, max-age=5', 'ETag': state_hash},
+        )
+
+    # Read the SVG file and update desk colors using pre-compiled patterns
+    with open('static/lab_room.svg', 'r') as f:
         svg_content = f.read()
 
-    # Update each desk color
     for station_num, color in station_colors.items():
-        pattern = rf'(<path id="desk-{station_num}"[^>]*fill=")[^"]*(")'
-        svg_content = re.sub(pattern, rf'\1{color}\2', svg_content)
+        pattern = DESK_REGEX.get(station_num)
+        if pattern:
+            svg_content = pattern.sub(rf'\1{color}\2', svg_content)
 
-    return Response(svg_content, mimetype='image/svg+xml')
+    _svg_cache = {'content': svg_content, 'hash': state_hash, 'time': now}
+
+    return Response(
+        svg_content,
+        mimetype='image/svg+xml',
+        headers={'Cache-Control': 'public, max-age=5', 'ETag': state_hash},
+    )
+
+
+@app.route('/api/lab-data')
+def api_lab_data():
+    """JSON endpoint for auto-refresh polling.
+
+    Returns lab status and queue data so the frontend can update without
+    a full page reload.
+    """
+    lab_status = get_lab_status()
+    queue = get_queue_data()
+    return jsonify({
+        'status': lab_status,
+        'queue': queue,
+    })
 
 
 @app.route('/api/auth/google', methods=['POST'])
@@ -609,40 +569,36 @@ def add_to_queue():
     user = session['user']
     csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
 
-    # Check if user is already in queue
-    existing_entries = []
-    file_exists = os.path.exists(csv_path)
+    with file_lock(csv_path):
+        existing_entries = []
+        file_exists = os.path.exists(csv_path)
 
-    if file_exists:
-        try:
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                existing_entries = list(reader)
+        if file_exists:
+            try:
+                with open(csv_path, 'r') as f:
+                    reader = csv.DictReader(f)
+                    existing_entries = list(reader)
 
-            # Check for duplicate
-            for entry in existing_entries:
-                if entry['email'] == user['email']:
-                    return jsonify({'error': 'You are already in this queue'}), 400
+                # Check for duplicate
+                for entry in existing_entries:
+                    if entry['email'] == user['email']:
+                        return jsonify({'error': 'You are already in this queue'}), 400
 
-        except Exception as e:
-            return jsonify({'error': 'Error reading queue'}), 500
-    else:
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+            except Exception as e:
+                return jsonify({'error': 'Error reading queue'}), 500
+        else:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
-    # Add user to queue
-    mode = 'a' if file_exists else 'w'
-    with open(csv_path, mode, newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-
-        # Write header only if file is new
-        if not file_exists:
+        # Rewrite entire file (atomic with lock held)
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
             writer.writeheader()
-
-        writer.writerow({
-            'name': user['name'],
-            'email': user['email']
-        })
+            writer.writerows(existing_entries)
+            writer.writerow({
+                'name': user['name'],
+                'email': user['email']
+            })
 
     return jsonify({
         'success': True,
@@ -679,22 +635,23 @@ def remove_from_queue():
         return jsonify({'error': 'Queue does not exist'}), 404
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            entries = list(reader)
+        with file_lock(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                entries = list(reader)
 
-        # Filter out the entry to remove
-        original_count = len(entries)
-        entries = [e for e in entries if e['email'] != email_to_remove]
+            # Filter out the entry to remove
+            original_count = len(entries)
+            entries = [e for e in entries if e['email'] != email_to_remove]
 
-        if len(entries) == original_count:
-            return jsonify({'error': 'User not found in queue'}), 404
+            if len(entries) == original_count:
+                return jsonify({'error': 'User not found in queue'}), 404
 
-        # Write back to file
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(entries)
+            # Write back to file
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+                writer.writerows(entries)
 
         return jsonify({
             'success': True,
@@ -738,37 +695,36 @@ def reorder_queue():
         return jsonify({'error': 'Queue does not exist'}), 404
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            entries = list(reader)
+        with file_lock(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                entries = list(reader)
 
-        # Find the index of the entry to move
-        index = None
-        for i, entry in enumerate(entries):
-            if entry['email'] == email:
-                index = i
-                break
+            # Find the index of the entry to move
+            index = None
+            for i, entry in enumerate(entries):
+                if entry['email'] == email:
+                    index = i
+                    break
 
-        if index is None:
-            return jsonify({'error': 'User not found in queue'}), 404
+            if index is None:
+                return jsonify({'error': 'User not found in queue'}), 404
 
-        # Perform the swap
-        if direction == 'up':
-            if index == 0:
-                return jsonify({'error': 'Already at the top of the queue'}), 400
-            # Swap with previous entry
-            entries[index], entries[index - 1] = entries[index - 1], entries[index]
-        else:  # down
-            if index == len(entries) - 1:
-                return jsonify({'error': 'Already at the bottom of the queue'}), 400
-            # Swap with next entry
-            entries[index], entries[index + 1] = entries[index + 1], entries[index]
+            # Perform the swap
+            if direction == 'up':
+                if index == 0:
+                    return jsonify({'error': 'Already at the top of the queue'}), 400
+                entries[index], entries[index - 1] = entries[index - 1], entries[index]
+            else:  # down
+                if index == len(entries) - 1:
+                    return jsonify({'error': 'Already at the bottom of the queue'}), 400
+                entries[index], entries[index + 1] = entries[index + 1], entries[index]
 
-        # Write back to file
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(entries)
+            # Write back to file
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+                writer.writerows(entries)
 
         return jsonify({
             'success': True,
@@ -812,35 +768,36 @@ def reposition_in_queue():
         return jsonify({'error': 'Queue does not exist'}), 404
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            entries = list(reader)
+        with file_lock(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                entries = list(reader)
 
-        # Find the entry to move
-        old_index = None
-        entry_to_move = None
-        for i, entry in enumerate(entries):
-            if entry['email'] == email:
-                old_index = i
-                entry_to_move = entry
-                break
+            # Find the entry to move
+            old_index = None
+            entry_to_move = None
+            for i, entry in enumerate(entries):
+                if entry['email'] == email:
+                    old_index = i
+                    entry_to_move = entry
+                    break
 
-        if old_index is None:
-            return jsonify({'error': 'User not found in queue'}), 404
+            if old_index is None:
+                return jsonify({'error': 'User not found in queue'}), 404
 
-        # Validate new_index
-        if new_index >= len(entries):
-            new_index = len(entries) - 1
+            # Validate new_index
+            if new_index >= len(entries):
+                new_index = len(entries) - 1
 
-        # Remove from old position and insert at new position
-        entries.pop(old_index)
-        entries.insert(new_index, entry_to_move)
+            # Remove from old position and insert at new position
+            entries.pop(old_index)
+            entries.insert(new_index, entry_to_move)
 
-        # Write back to file
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(entries)
+            # Write back to file
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+                writer.writerows(entries)
 
         return jsonify({
             'success': True,
@@ -874,35 +831,36 @@ def set_station_override():
         return jsonify({'error': 'Invalid station number'}), 400
 
     try:
-        # Read current overrides
-        overrides = {}
-        if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
-            with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    overrides[int(row['station'])] = row['override_occupied']
+        with file_lock(MANUAL_OVERRIDES_CSV_PATH):
+            # Read current overrides
+            overrides = {}
+            if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
+                with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        overrides[int(row['station'])] = row['override_occupied']
 
-        # Update or remove override
-        if override_occupied is None:
-            # Clear override
-            if station in overrides:
-                del overrides[station]
-                message = f'Cleared override for station {station}'
+            # Update or remove override
+            if override_occupied is None:
+                # Clear override
+                if station in overrides:
+                    del overrides[station]
+                    message = f'Cleared override for station {station}'
+                else:
+                    return jsonify({'error': 'No override exists for this station'}), 404
             else:
-                return jsonify({'error': 'No override exists for this station'}), 404
-        else:
-            # Set override
-            if not isinstance(override_occupied, bool):
-                return jsonify({'error': 'override_occupied must be true, false, or null'}), 400
-            overrides[station] = 'true' if override_occupied else 'false'
-            message = f'Set station {station} override to {"occupied" if override_occupied else "available"}'
+                # Set override
+                if not isinstance(override_occupied, bool):
+                    return jsonify({'error': 'override_occupied must be true, false, or null'}), 400
+                overrides[station] = 'true' if override_occupied else 'false'
+                message = f'Set station {station} override to {"occupied" if override_occupied else "available"}'
 
-        # Write back to file
-        with open(MANUAL_OVERRIDES_CSV_PATH, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['station', 'override_occupied'])
-            writer.writeheader()
-            for s, occupied in sorted(overrides.items()):
-                writer.writerow({'station': s, 'override_occupied': occupied})
+            # Write back to file
+            with open(MANUAL_OVERRIDES_CSV_PATH, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['station', 'override_occupied'])
+                writer.writeheader()
+                for s, occupied in sorted(overrides.items()):
+                    writer.writerow({'station': s, 'override_occupied': occupied})
 
         return jsonify({
             'success': True,
@@ -936,7 +894,6 @@ def get_pending_claim(token):
             reader = csv.DictReader(f)
             for row in reader:
                 if row['claim_token'] == token:
-                    from datetime import datetime
                     expires_at = datetime.fromisoformat(row['expires_at'])
                     if expires_at > datetime.now():
                         return row
@@ -953,14 +910,15 @@ def delete_pending_claim(token):
         return False
 
     try:
-        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            claims = [row for row in reader if row['claim_token'] != token]
+        with file_lock(PENDING_CLAIMS_CSV_PATH):
+            with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+                reader = csv.DictReader(f)
+                claims = [row for row in reader if row['claim_token'] != token]
 
-        with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
-            writer.writeheader()
-            writer.writerows(claims)
+            with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
+                writer.writeheader()
+                writer.writerows(claims)
         return True
     except Exception as e:
         print(f"Error deleting pending claim: {e}")
@@ -973,18 +931,19 @@ def mark_claim_confirmed(token):
         return False
 
     try:
-        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            claims = list(reader)
+        with file_lock(PENDING_CLAIMS_CSV_PATH):
+            with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
+                reader = csv.DictReader(f)
+                claims = list(reader)
 
-        for claim in claims:
-            if claim['claim_token'] == token:
-                claim['confirmed'] = 'true'
+            for claim in claims:
+                if claim['claim_token'] == token:
+                    claim['confirmed'] = 'true'
 
-        with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
-            writer.writeheader()
-            writer.writerows(claims)
+            with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
+                writer.writeheader()
+                writer.writerows(claims)
         return True
     except Exception as e:
         print(f"Error marking claim confirmed: {e}")
@@ -999,14 +958,15 @@ def remove_from_queue_by_email(queue_type, email):
         return False
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            entries = [row for row in reader if row['email'] != email]
+        with file_lock(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                entries = [row for row in reader if row['email'] != email]
 
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(entries)
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+                writer.writerows(entries)
         return True
     except Exception as e:
         print(f"Error removing from queue: {e}")
@@ -1021,7 +981,6 @@ def claim_page(token):
         return render_template('claim.html', error='Invalid or expired claim link.')
 
     # Calculate time remaining
-    from datetime import datetime
     expires_at = datetime.fromisoformat(claim['expires_at'])
     time_remaining = (expires_at - datetime.now()).total_seconds()
 
@@ -1061,4 +1020,3 @@ def confirm_claim():
 
 if __name__ == '__main__':
     app.run(host="127.0.0.1", port=5000)
-

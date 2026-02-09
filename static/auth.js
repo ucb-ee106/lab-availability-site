@@ -2,8 +2,21 @@
 let currentUser = window.preloadedUser || null;
 let pendingQueueType = null;
 
-// Initialize Google Sign-In
-function initializeGoogleSignIn() {
+// ---------------------------------------------------------------------------
+// Google Sign-In initialisation
+// ---------------------------------------------------------------------------
+
+// Called via onload= attribute on the Google script tag (preferred), or
+// from the DOMContentLoaded fallback below.
+function initGoogleSignIn() {
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) return;
+
+    google.accounts.id.initialize({
+        client_id: '22576242210-5dqoo2haju5f7t0qf5cnuq2hpbhstjpe.apps.googleusercontent.com',
+        callback: handleCredentialResponse,
+        auto_select: false
+    });
+
     // Check if user is already logged in (skip if preloaded)
     if (!currentUser) {
         checkAuthStatus();
@@ -18,16 +31,13 @@ async function checkAuthStatus() {
         const response = await fetch('/api/auth/user');
         if (response.ok) {
             currentUser = await response.json();
-            updateUserStatus();
         } else {
             currentUser = null;
-            updateUserStatus();
         }
     } catch (error) {
-        console.error('Error checking auth status:', error);
         currentUser = null;
-        updateUserStatus();
     }
+    updateUserStatus();
 }
 
 // Handle credential response from Google
@@ -35,12 +45,8 @@ async function handleCredentialResponse(response) {
     try {
         const result = await fetch('/api/auth/google', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                credential: response.credential
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential: response.credential })
         });
 
         const data = await result.json();
@@ -61,7 +67,6 @@ async function handleCredentialResponse(response) {
             showMessage(data.error || 'Authentication failed', 'error');
         }
     } catch (error) {
-        console.error('Error during authentication:', error);
         showMessage('Authentication error. Please try again.', 'error');
     }
 }
@@ -78,14 +83,13 @@ async function logout() {
         updateUserStatus();
         showMessage('Logged out successfully', 'success');
     } catch (error) {
-        console.error('Error during logout:', error);
+        // silently fail
     }
 }
 
 // Update user status indicator
 function updateUserStatus() {
     const userStatus = document.getElementById('user-status');
-
     if (!userStatus) return;
 
     if (currentUser) {
@@ -101,82 +105,120 @@ function updateUserStatus() {
     }
 }
 
-// Show sign-in modal
+// ---------------------------------------------------------------------------
+// Sign-in modal (with basic accessibility)
+// ---------------------------------------------------------------------------
+
 function showSignInModal() {
     const modal = document.getElementById('signin-modal');
     modal.style.display = 'block';
 
     // Render Google Sign-In button in the modal
     const buttonContainer = document.getElementById('google-signin-button');
-    buttonContainer.innerHTML = ''; // Clear previous button
+    buttonContainer.innerHTML = '';
 
-    // Check if Google Sign-In is loaded
     if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
-        console.error('Google Sign-In library not loaded');
         buttonContainer.innerHTML = '<p style="color: red;">Error: Sign-in unavailable. Please refresh the page.</p>';
         return;
     }
 
     try {
-        google.accounts.id.renderButton(
-            buttonContainer,
-            {
-                theme: 'outline',
-                size: 'large',
-                text: 'signin_with',
-                width: 300
-            }
-        );
+        google.accounts.id.renderButton(buttonContainer, {
+            theme: 'outline',
+            size: 'large',
+            text: 'signin_with',
+            width: 300
+        });
     } catch (error) {
-        console.error('Error rendering Google Sign-In button:', error);
         buttonContainer.innerHTML = '<p style="color: red;">Error loading sign-in button. Please refresh the page.</p>';
     }
+
+    // Move focus into modal
+    const closeBtn = modal.querySelector('.close');
+    if (closeBtn) closeBtn.focus();
 }
 
-// Close sign-in modal
 function closeSignInModal() {
     const modal = document.getElementById('signin-modal');
     modal.style.display = 'none';
     pendingQueueType = null;
 }
 
-// Add to queue function (triggered by button click)
+// ---------------------------------------------------------------------------
+// Auto-refresh (polls /api/lab-data every 10 s)
+// ---------------------------------------------------------------------------
+
+async function refreshLabData() {
+    try {
+        const resp = await fetch('/api/lab-data');
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        // Update lab status banner
+        const banner = document.getElementById('lab-status-banner');
+        if (banner) banner.style.background = data.status.color;
+
+        const stateEl = document.getElementById('lab-state');
+        if (stateEl) stateEl.textContent = data.status.state;
+
+        const detailsEl = document.getElementById('lab-details');
+        if (detailsEl) {
+            detailsEl.innerHTML =
+                data.status.turtlebots_available +
+                ' Turtlebot' + (data.status.turtlebots_available !== 1 ? 's' : '') + ' Open<br>' +
+                data.status.ur7es_available +
+                ' UR7e' + (data.status.ur7es_available !== 1 ? 's' : '') + ' Open';
+        }
+
+        // Refresh SVG (cache-buster forces re-fetch; server responds quickly due to cache)
+        const svgImg = document.getElementById('lab-svg');
+        if (svgImg) {
+            svgImg.src = '/lab_room.svg?' + Date.now();
+        }
+    } catch (e) {
+        // Silently fail - will retry next interval
+    }
+}
+
+// Start auto-refresh
+let _autoRefreshId = null;
+function startAutoRefresh() {
+    if (_autoRefreshId) return;
+    _autoRefreshId = setInterval(refreshLabData, 10000);
+}
+
+// ---------------------------------------------------------------------------
+// Queue operations
+// ---------------------------------------------------------------------------
+
 async function addToQueue(queueType) {
     if (!currentUser) {
-        // User not signed in, show modal
         pendingQueueType = queueType;
         showSignInModal();
         return;
     }
-
-    // User is signed in, add to queue directly
     addToQueueDirect(queueType);
 }
 
-// Add to queue directly (when authenticated)
 async function addToQueueDirect(queueType) {
     try {
         const response = await fetch('/api/queue/add', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                queue_type: queueType
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ queue_type: queueType })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message + '. When a station opens, you\'ll get an email. You have 5 minutes to click the confirmation link and log into the computer.', 'success');
-            // Reload page to show updated queue (longer delay so user can read the message)
-            setTimeout(() => location.reload(), 5000);
+            // Refresh data then reload to show queue table changes
+            await refreshLabData();
+            setTimeout(() => location.reload(), 3000);
         } else {
             showMessage(data.error || 'Failed to join queue', 'error');
         }
     } catch (error) {
-        console.error('Error adding to queue:', error);
         showMessage('Error joining queue. Please try again.', 'error');
     }
 }
@@ -188,7 +230,6 @@ async function removeFromQueue(queueType, email, name) {
         return;
     }
 
-    // Confirm removal
     if (!confirm(`Are you sure you want to remove ${name} from the ${queueType} queue?`)) {
         return;
     }
@@ -196,26 +237,20 @@ async function removeFromQueue(queueType, email, name) {
     try {
         const response = await fetch('/api/queue/remove', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                queue_type: queueType,
-                email: email
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ queue_type: queueType, email: email })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message, 'success');
-            // Reload page to show updated queue
-            setTimeout(() => location.reload(), 1000);
+            await refreshLabData();
+            setTimeout(() => location.reload(), 800);
         } else {
             showMessage(data.error || 'Failed to remove from queue', 'error');
         }
     } catch (error) {
-        console.error('Error removing from queue:', error);
         showMessage('Error removing from queue. Please try again.', 'error');
     }
 }
@@ -230,27 +265,20 @@ async function moveInQueue(queueType, email, direction) {
     try {
         const response = await fetch('/api/queue/reorder', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                queue_type: queueType,
-                email: email,
-                direction: direction
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ queue_type: queueType, email: email, direction: direction })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message, 'success');
-            // Reload page to show updated queue
-            setTimeout(() => location.reload(), 800);
+            await refreshLabData();
+            setTimeout(() => location.reload(), 500);
         } else {
             showMessage(data.error || 'Failed to reorder queue', 'error');
         }
     } catch (error) {
-        console.error('Error reordering queue:', error);
         showMessage('Error reordering queue. Please try again.', 'error');
     }
 }
@@ -259,44 +287,25 @@ async function moveInQueue(queueType, email, direction) {
 function showMessage(message, type) {
     // Remove any existing messages
     const existingMessage = document.querySelector('.message-toast');
-    if (existingMessage) {
-        existingMessage.remove();
-    }
+    if (existingMessage) existingMessage.remove();
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `message-toast message-${type}`;
     messageDiv.textContent = message;
     document.body.appendChild(messageDiv);
 
-    // Remove message after 5 seconds
-    setTimeout(() => {
-        messageDiv.remove();
-    }, 5000);
+    setTimeout(() => messageDiv.remove(), 5000);
 }
 
-// Initialize Google Sign-In when library is ready
-function initGoogleSignIn() {
-    if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
-        google.accounts.id.initialize({
-            client_id: '22576242210-5dqoo2haju5f7t0qf5cnuq2hpbhstjpe.apps.googleusercontent.com',
-            callback: handleCredentialResponse,
-            auto_select: false
-        });
+// ---------------------------------------------------------------------------
+// Drag and drop for queue reordering (admin)
+// ---------------------------------------------------------------------------
 
-        initializeGoogleSignIn();
-    } else {
-        console.error('Google Sign-In library not loaded');
-    }
-}
-
-// Drag and drop variables
 let draggedRow = null;
 let draggedOverRow = null;
 
-// Initialize drag and drop for queue rows
 function initializeDragAndDrop() {
     const queueRows = document.querySelectorAll('.queue-row');
-
     queueRows.forEach(row => {
         row.addEventListener('dragstart', handleDragStart);
         row.addEventListener('dragover', handleDragOver);
@@ -315,59 +324,43 @@ function handleDragStart(e) {
 }
 
 function handleDragOver(e) {
-    if (e.preventDefault) {
-        e.preventDefault();
-    }
+    e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     return false;
 }
 
 function handleDragEnter(e) {
-    // Only highlight if it's a different row in the same queue
-    if (this !== draggedRow &&
-        this.dataset.queueType === draggedRow.dataset.queueType) {
+    if (this !== draggedRow && this.dataset.queueType === draggedRow.dataset.queueType) {
         this.classList.add('drag-over');
         draggedOverRow = this;
     }
 }
 
-function handleDragLeave(e) {
+function handleDragLeave() {
     this.classList.remove('drag-over');
 }
 
 function handleDrop(e) {
-    if (e.stopPropagation) {
-        e.stopPropagation();
-    }
+    e.stopPropagation();
 
-    // Make sure we're dropping on a valid row in the same queue
-    if (draggedRow !== this &&
-        this.dataset.queueType === draggedRow.dataset.queueType) {
-
+    if (draggedRow !== this && this.dataset.queueType === draggedRow.dataset.queueType) {
         const queueType = this.dataset.queueType;
         const email = draggedRow.dataset.email;
         const newIndex = parseInt(this.dataset.index);
-
-        // Call API to reposition
         repositionInQueue(queueType, email, newIndex);
     }
-
     return false;
 }
 
-function handleDragEnd(e) {
-    // Remove all drag-related classes
-    const queueRows = document.querySelectorAll('.queue-row');
-    queueRows.forEach(row => {
+function handleDragEnd() {
+    document.querySelectorAll('.queue-row').forEach(row => {
         row.classList.remove('dragging');
         row.classList.remove('drag-over');
     });
-
     draggedRow = null;
     draggedOverRow = null;
 }
 
-// Reposition in queue via API
 async function repositionInQueue(queueType, email, newIndex) {
     if (!currentUser) {
         showMessage('Please sign in first', 'error');
@@ -377,38 +370,32 @@ async function repositionInQueue(queueType, email, newIndex) {
     try {
         const response = await fetch('/api/queue/reposition', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                queue_type: queueType,
-                email: email,
-                new_index: newIndex
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ queue_type: queueType, email: email, new_index: newIndex })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message, 'success');
-            // Reload page to show updated queue
+            await refreshLabData();
             setTimeout(() => location.reload(), 500);
         } else {
             showMessage(data.error || 'Failed to reorder queue', 'error');
         }
     } catch (error) {
-        console.error('Error reordering queue:', error);
         showMessage('Error reordering queue. Please try again.', 'error');
     }
 }
 
-// Clear active user function (placeholder for future implementation)
+// ---------------------------------------------------------------------------
+// Station override functions (admin)
+// ---------------------------------------------------------------------------
+
 function clearActiveUser(station) {
-    // TODO: Implement clear active user functionality
     showMessage('Clear Active User functionality coming soon', 'error');
 }
 
-// Station override functions
 async function setOverride(station, occupied) {
     if (!currentUser) {
         showMessage('Please sign in first', 'error');
@@ -418,28 +405,20 @@ async function setOverride(station, occupied) {
     try {
         const response = await fetch('/api/station/override', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                station: station,
-                override_occupied: occupied
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ station: station, override_occupied: occupied })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message, 'success');
-            // Update button states
             updateOverrideButtonStates(station, occupied);
-            // Reload page to reflect changes in the SVG
-            setTimeout(() => location.reload(), 1000);
+            await refreshLabData();
         } else {
             showMessage(data.error || 'Failed to set override', 'error');
         }
     } catch (error) {
-        console.error('Error setting override:', error);
         showMessage('Error setting override. Please try again.', 'error');
     }
 }
@@ -453,28 +432,20 @@ async function clearOverride(station) {
     try {
         const response = await fetch('/api/station/override', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                station: station,
-                override_occupied: null
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ station: station, override_occupied: null })
         });
 
         const data = await response.json();
 
         if (response.ok) {
             showMessage(data.message, 'success');
-            // Update button states
             updateOverrideButtonStates(station, null);
-            // Reload page to reflect changes in the SVG
-            setTimeout(() => location.reload(), 1000);
+            await refreshLabData();
         } else {
             showMessage(data.error || 'Failed to clear override', 'error');
         }
     } catch (error) {
-        console.error('Error clearing override:', error);
         showMessage('Error clearing override. Please try again.', 'error');
     }
 }
@@ -483,8 +454,7 @@ function updateOverrideButtonStates(station, state) {
     const item = document.querySelector(`.override-item[data-station="${station}"]`);
     if (!item) return;
 
-    const buttons = item.querySelectorAll('.override-btn');
-    buttons.forEach(btn => btn.classList.remove('active'));
+    item.querySelectorAll('.override-btn').forEach(btn => btn.classList.remove('active'));
 
     if (state === true) {
         item.querySelector('.override-occupied').classList.add('active');
@@ -502,7 +472,6 @@ async function loadOverrideStates() {
             const data = await response.json();
             const overrides = data.overrides || {};
 
-            // Set all stations to 'Auto' (clear) by default
             document.querySelectorAll('.override-item').forEach(item => {
                 const station = item.dataset.station;
                 if (overrides[station] !== undefined) {
@@ -513,41 +482,36 @@ async function loadOverrideStates() {
             });
         }
     } catch (error) {
-        console.error('Error loading override states:', error);
+        // silently fail
     }
 }
 
-// Initialize when DOM is loaded
+// ---------------------------------------------------------------------------
+// Initialization
+// ---------------------------------------------------------------------------
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Wait for Google Sign-In library to load
-    if (typeof google !== 'undefined' && google.accounts) {
+    // Fallback: if onload on the script tag didn't fire (e.g. already cached),
+    // try to initialise now.
+    if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
         initGoogleSignIn();
-    } else {
-        // Poll for Google library to be ready
-        let attempts = 0;
-        const checkGoogle = setInterval(() => {
-            attempts++;
-            if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
-                clearInterval(checkGoogle);
-                initGoogleSignIn();
-            } else if (attempts > 50) { // Stop after 5 seconds
-                clearInterval(checkGoogle);
-                console.error('Google Sign-In library failed to load');
-            }
-        }, 100);
     }
 
-    // Close modal when clicking outside of it
-    window.onclick = function(event) {
+    // Close modal on backdrop click or Escape key
+    window.addEventListener('click', (event) => {
         const modal = document.getElementById('signin-modal');
-        if (event.target === modal) {
-            closeSignInModal();
-        }
-    };
+        if (event.target === modal) closeSignInModal();
+    });
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeSignInModal();
+    });
 
     // Initialize drag and drop for queue management
     initializeDragAndDrop();
 
-    // Load current override states
+    // Load current override states (admin page)
     loadOverrideStates();
+
+    // Start auto-refreshing SVG + status every 10 s
+    startAutoRefresh();
 });

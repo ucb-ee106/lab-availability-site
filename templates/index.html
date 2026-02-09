@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cory 105 Lab Availability</title>
+    <link rel="preconnect" href="https://accounts.google.com">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://accounts.google.com/gsi/client" async defer onload="initGoogleSignIn()"></script>
     <style>
         /* Dynamic background color based on lab status */
         .lab-status {
@@ -30,23 +31,23 @@
 
 
         <div class="main-content">
-            <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}">
+            <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}" id="lab-svg">
             <div>
-                <div class="lab-status">
+                <div class="lab-status" id="lab-status-banner">
                     <h2>Lab Status:</h2>
-                    <div class="status">{{ lab_status.state }}</div>
-                    <div class="details">
+                    <div class="status" id="lab-state">{{ lab_status.state }}</div>
+                    <div class="details" id="lab-details">
                         {{ lab_status.turtlebots_available }} Turtlebot{{ 's' if lab_status.turtlebots_available != 1 }} Open<br>
                         {{ lab_status.ur7es_available }} UR7e{{ 's' if lab_status.ur7es_available != 1 }} Open
                     </div>
                 </div>
                 {% if lab_status.show_book_robot %}
-                <a href="https://calendar.google.com/calendar/u/0/appointments/AcZssZ1_Ewo5-lmy3Exr6TnOLTQH9Iv15l2QCruE6QQ=" target="_blank" style="text-decoration: none;">
+                <a href="https://calendar.google.com/calendar/u/0/appointments/AcZssZ1_Ewo5-lmy3Exr6TnOLTQH9Iv15l2QCruE6QQ=" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
                     <button class="queue-button">Book Robot</button>
                 </a>
                 {% endif %}
                 {% if lab_status.show_turtlebot_queue %}
-                <div class="queue-container">
+                <div class="queue-container" id="turtlebot-queue-container">
                     <h3>Turtlebot Queue Size: {{ queue.turtlebot|length }} groups</h3>
                     {% if queue.turtlebot %}
                     <table class="queue-table">
@@ -70,7 +71,7 @@
                 <button class="queue-button" aria-label="Add to Turtlebot Queue" onclick="addToQueue('turtlebot')">Add to Turtlebot Queue</button>
                 {% endif %}
                 {% if lab_status.show_ur7e_queue %}
-                <div class="queue-container">
+                <div class="queue-container" id="ur7e-queue-container">
                     <h3>UR7e Queue Size: {{ queue.ur7e|length }} groups</h3>
                     {% if queue.ur7e %}
                     <table class="queue-table">
@@ -95,13 +96,24 @@
                 {% endif %}
             </div>
         </div>
+
+        <!-- Google Calendar -->
+        <div class="calendar-container">
+            <h2>Lab Schedule</h2>
+            <iframe src="https://calendar.google.com/calendar/embed?src=c_32358bca68031c99fb3e6178f65bad1f2ef6284b597525988dccbd185fcdae31%40group.calendar.google.com&ctz=America%2FLos_Angeles&mode=WEEK"
+                    title="Lab Schedule Calendar"
+                    style="border: 0"
+                    width="100%"
+                    height="400">
+            </iframe>
+        </div>
     </div>
 
     <!-- Sign-in Modal -->
-    <div id="signin-modal" class="modal">
+    <div id="signin-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="signin-modal-title">
         <div class="modal-content">
-            <span class="close" onclick="closeSignInModal()">&times;</span>
-            <h2>Sign in to join the queue</h2>
+            <button class="close" onclick="closeSignInModal()" aria-label="Close sign-in dialog">&times;</button>
+            <h2 id="signin-modal-title">Sign in to join the queue</h2>
             <p>Please sign in with your berkeley.edu account</p>
             <div id="google-signin-button"></div>
         </div>

@@ -4,7 +4,6 @@ Notification checker - runs every 10 seconds via systemd.
 Only does work during Lab OH times.
 """
 import os
-import sys
 import json
 import csv
 import smtplib
@@ -13,23 +12,13 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import secrets
 
-from icalendar import Calendar
-from dateutil.rrule import rrulestr
-from dateutil import tz
-
-# Paths (relative to script directory)
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CALENDAR_PATH = os.path.join(SCRIPT_DIR, 'uploads/course_calendar.ics')
-STATES_PATH = os.path.join(SCRIPT_DIR, 'csv/previous_states.json')
-CLAIMS_PATH = os.path.join(SCRIPT_DIR, 'csv/pending_claims.csv')
-QUEUE_TURTLEBOT_PATH = os.path.join(SCRIPT_DIR, 'csv/queue_turtlebot.csv')
-QUEUE_UR7E_PATH = os.path.join(SCRIPT_DIR, 'csv/queue_ur7e.csv')
-STATION_STATUS_PATH = os.path.join(SCRIPT_DIR, 'csv/station_status.csv')
-MANUAL_OVERRIDES_PATH = os.path.join(SCRIPT_DIR, 'csv/manual_overrides.csv')
-
-# Station groupings
-TURTLEBOT_STATIONS = {1, 2, 3, 4, 5, 11}
-UR7E_STATIONS = {6, 7, 8, 9, 10}
+from lab_utils import (
+    TURTLEBOT_STATIONS, UR7E_STATIONS,
+    QUEUE_TURTLEBOT_CSV_PATH, QUEUE_UR7E_CSV_PATH,
+    PENDING_CLAIMS_CSV_PATH, STATION_STATUS_CSV_PATH,
+    PREVIOUS_STATES_PATH, MANUAL_OVERRIDES_CSV_PATH,
+    is_lab_oh_time, get_manual_overrides, file_lock,
+)
 
 # Configuration from environment
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
@@ -40,137 +29,14 @@ GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', '')
 CLAIM_EXPIRY_MINUTES = 5
 
 
-def get_current_lab_event():
-    """
-    Check calendar and return the current event type.
-    Returns: 'lab_oh', 'lab_section', 'maintenance', or None
-
-    Event patterns:
-    - Lab OH: "[EECS C106A] Lab OH - ..." or "[EECS C106B] Lab OH - ..."
-    - Lab Section: "[EECS C106A] Lab - ..." or "[EECS C106B] Lab - ..." or "[EECS C106A] - ..."
-    - Maintenance: "Lab Maintenance - ..."
-    """
-    if not os.path.exists(CALENDAR_PATH):
-        return None
-
-    try:
-        with open(CALENDAR_PATH, 'rb') as f:
-            cal = Calendar.from_ical(f.read())
-    except Exception as e:
-        print(f"Error reading calendar: {e}")
-        return None
-
-    now = datetime.now(tz.tzlocal())
-
-    for component in cal.walk():
-        if component.name != 'VEVENT':
-            continue
-
-        summary = str(component.get('summary', ''))
-        summary_lower = summary.lower()
-
-        # Determine event type
-        if 'lab oh' in summary_lower:
-            event_type = 'lab_oh'
-        elif 'lab maintenance' in summary_lower or 'maintenance' in summary_lower:
-            event_type = 'maintenance'
-        elif ('106a' in summary_lower or '106b' in summary_lower or 'c106a' in summary_lower or 'c106b' in summary_lower) and 'lab' in summary_lower:
-            event_type = 'lab_section'
-        elif ('eecs' in summary_lower and ('106a' in summary_lower or '106b' in summary_lower)):
-            # Catch patterns like "[EECS C106A] - Satwik, Ishan" (lab without explicit "Lab" word)
-            event_type = 'lab_section'
-        else:
-            continue
-
-        dtstart = component.get('dtstart')
-        dtend = component.get('dtend')
-
-        if dtstart is None or dtend is None:
-            continue
-
-        start = dtstart.dt
-        end = dtend.dt
-
-        # Handle all-day events (date instead of datetime)
-        if not isinstance(start, datetime):
-            start = datetime.combine(start, datetime.min.time())
-            start = start.replace(tzinfo=tz.tzlocal())
-        if not isinstance(end, datetime):
-            end = datetime.combine(end, datetime.max.time())
-            end = end.replace(tzinfo=tz.tzlocal())
-
-        # Ensure timezone awareness
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=tz.tzlocal())
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=tz.tzlocal())
-
-        # Check for recurring events
-        rrule = component.get('rrule')
-        if rrule:
-            try:
-                rule = rrulestr(rrule.to_ical().decode('utf-8'), dtstart=start)
-                duration = end - start
-
-                window_start = now - timedelta(days=1)
-                window_end = now + timedelta(days=1)
-
-                for occurrence in rule.between(window_start, window_end, inc=True):
-                    occ_start = occurrence
-                    occ_end = occurrence + duration
-
-                    if occ_start <= now <= occ_end:
-                        return event_type
-            except Exception as e:
-                print(f"Error parsing rrule: {e}")
-
-        # Check if now is within event time (for non-recurring or as fallback)
-        if start <= now <= end:
-            return event_type
-
-    return None
-
-
-def is_lab_oh_time():
-    """Check if current time is during Lab OH (for 106A or 106B)."""
-    return get_current_lab_event() == 'lab_oh'
-
-
-def is_lab_section_time():
-    """Check if current time is during a Lab Section (class in session)."""
-    return get_current_lab_event() == 'lab_section'
-
-
-def is_maintenance_time():
-    """Check if current time is during Lab Maintenance."""
-    return get_current_lab_event() == 'maintenance'
-
-
-def get_manual_overrides():
-    """Get manual station overrides from CSV file."""
-    overrides = {}
-    if os.path.exists(MANUAL_OVERRIDES_PATH):
-        try:
-            with open(MANUAL_OVERRIDES_PATH, 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    station = int(row['station'])
-                    override_occupied = row['override_occupied'].lower()
-                    if override_occupied in ['true', 'false']:
-                        overrides[station] = (override_occupied == 'true')
-        except Exception as e:
-            print(f"Error reading manual overrides: {e}")
-    return overrides
-
-
 def get_current_states():
     """Get current station occupied states from CSV, applying manual overrides."""
     states = {}
-    if not os.path.exists(STATION_STATUS_PATH):
+    if not os.path.exists(STATION_STATUS_CSV_PATH):
         return states
 
     try:
-        with open(STATION_STATUS_PATH, 'r') as f:
+        with open(STATION_STATUS_CSV_PATH, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 station = int(row['station'])
@@ -191,11 +57,11 @@ def get_current_states():
 
 def get_previous_states():
     """Load previous states from JSON file."""
-    if not os.path.exists(STATES_PATH):
+    if not os.path.exists(PREVIOUS_STATES_PATH):
         return {}
 
     try:
-        with open(STATES_PATH, 'r') as f:
+        with open(PREVIOUS_STATES_PATH, 'r') as f:
             data = json.load(f)
             # Convert string keys back to int
             return {int(k): v for k, v in data.items()}
@@ -207,7 +73,7 @@ def get_previous_states():
 def save_states(states):
     """Save current states for next comparison."""
     try:
-        with open(STATES_PATH, 'w') as f:
+        with open(PREVIOUS_STATES_PATH, 'w') as f:
             json.dump(states, f)
     except Exception as e:
         print(f"Error saving states: {e}")
@@ -215,7 +81,7 @@ def save_states(states):
 
 def get_first_in_queue(station_type):
     """Get first person in queue for station type."""
-    csv_path = QUEUE_TURTLEBOT_PATH if station_type == 'turtlebot' else QUEUE_UR7E_PATH
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if station_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
 
     if not os.path.exists(csv_path):
         return None
@@ -234,11 +100,11 @@ def get_first_in_queue(station_type):
 def get_pending_claims():
     """Get all pending claims from CSV file."""
     claims = []
-    if not os.path.exists(CLAIMS_PATH):
+    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
         return claims
 
     try:
-        with open(CLAIMS_PATH, 'r') as f:
+        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 claims.append(row)
@@ -251,34 +117,48 @@ def get_pending_claims():
 def save_pending_claims(claims):
     """Save pending claims to CSV file."""
     try:
-        with open(CLAIMS_PATH, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
-            writer.writeheader()
-            writer.writerows(claims)
+        with file_lock(PENDING_CLAIMS_CSV_PATH):
+            with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
+                writer.writeheader()
+                writer.writerows(claims)
     except Exception as e:
         print(f"Error saving pending claims: {e}")
 
 
-def has_pending_claim(station_type):
+def has_pending_claim(station_type, claims):
     """Check if there's already a pending claim for this station type."""
-    claims = get_pending_claims()
     now = datetime.now()
 
     for claim in claims:
         if claim['station_type'] == station_type:
+            is_confirmed = claim.get('confirmed', '').lower() == 'true'
             expires_at = datetime.fromisoformat(claim['expires_at'])
-            if expires_at > now:
+            if is_confirmed or expires_at > now:
                 return True
 
     return False
 
 
-def create_pending_claim(email, name, station_type, station):
-    """Create claim with 5-min expiry, return token."""
+def person_has_active_claim(email, claims):
+    """Check if a person already has any active claim (to avoid spam)."""
+    now = datetime.now()
+
+    for claim in claims:
+        if claim['email'] == email:
+            is_confirmed = claim.get('confirmed', '').lower() == 'true'
+            expires_at = datetime.fromisoformat(claim['expires_at'])
+            if is_confirmed or expires_at > now:
+                return True
+
+    return False
+
+
+def create_pending_claim(email, name, station_type, station, claims):
+    """Create claim with 5-min expiry, return token. Appends to claims list in-place."""
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now() + timedelta(minutes=CLAIM_EXPIRY_MINUTES)
 
-    claims = get_pending_claims()
     claims.append({
         'email': email,
         'name': name,
@@ -295,20 +175,21 @@ def create_pending_claim(email, name, station_type, station):
 
 def remove_from_queue(station_type, email):
     """Remove a person from the queue by email."""
-    csv_path = QUEUE_TURTLEBOT_PATH if station_type == 'turtlebot' else QUEUE_UR7E_PATH
+    csv_path = QUEUE_TURTLEBOT_CSV_PATH if station_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
 
     if not os.path.exists(csv_path):
         return
 
     try:
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            entries = [row for row in reader if row['email'] != email]
+        with file_lock(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                entries = [row for row in reader if row['email'] != email]
 
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(entries)
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+                writer.writerows(entries)
     except Exception as e:
         print(f"Error removing from queue: {e}")
 
@@ -380,10 +261,12 @@ Go Patriots, Go Celtics, Nobody is Illegal on Stolen Land, Love is Love, Black L
         return False
 
 
-def check_expired_claims():
-    """Find and handle expired claims - notify next person in queue."""
-    claims = get_pending_claims()
-    current_states = get_current_states()
+def check_expired_claims(claims, current_states):
+    """Find and handle expired claims - notify next person in queue.
+
+    Mutates *claims* in-place (removes expired, keeps active).
+    Returns the list of active claims.
+    """
     now = datetime.now()
     active_claims = []
     expired_by_type = {}
@@ -440,8 +323,13 @@ def check_expired_claims():
                 # Notify next person in queue
                 person = get_first_in_queue(station_type)
                 if person:
-                    token = create_pending_claim(person['email'], person['name'], station_type, available_station)
-                    send_notification_email(person['email'], person['name'], station_type, available_station, token)
+                    if person_has_active_claim(person['email'], active_claims):
+                        print(f"Person {person['email']} already has an active claim, skipping")
+                    else:
+                        token = create_pending_claim(person['email'], person['name'], station_type, available_station, active_claims)
+                        send_notification_email(person['email'], person['name'], station_type, available_station, token)
+
+    return active_claims
 
 
 def main():
@@ -452,12 +340,13 @@ def main():
 
     print(f"Running notification check at {datetime.now()}")
 
-    # Check for expired claims first
-    check_expired_claims()
-
-    # Get states
+    # Read all shared state once at the start
     current = get_current_states()
     previous = get_previous_states()
+    claims = get_pending_claims()
+
+    # Check for expired claims first (mutates claims list)
+    active_claims = check_expired_claims(claims, current)
 
     # On first run, just save states without notifications
     if not previous:
@@ -472,12 +361,15 @@ def main():
             station_type = 'turtlebot' if station in TURTLEBOT_STATIONS else 'ur7e'
             print(f"Station {station} ({station_type}) became available")
 
-            # Check no pending claim for this type
-            if not has_pending_claim(station_type):
+            # Check no pending claim for this station type
+            if not has_pending_claim(station_type, active_claims):
                 person = get_first_in_queue(station_type)
                 if person:
-                    token = create_pending_claim(person['email'], person['name'], station_type, station)
-                    send_notification_email(person['email'], person['name'], station_type, station, token)
+                    if person_has_active_claim(person['email'], active_claims):
+                        print(f"Person {person['email']} already has an active claim, skipping")
+                    else:
+                        token = create_pending_claim(person['email'], person['name'], station_type, station, active_claims)
+                        send_notification_email(person['email'], person['name'], station_type, station, token)
             else:
                 print(f"Already have pending claim for {station_type}, skipping notification")
 

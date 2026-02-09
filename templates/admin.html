@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cory 105 Admin Page</title>
+    <link rel="preconnect" href="https://accounts.google.com">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://accounts.google.com/gsi/client" async defer onload="initGoogleSignIn()"></script>
     <style>
         /* Dynamic background color based on lab status */
         .lab-status {
@@ -29,18 +30,18 @@
 
 
         <div class="main-content">
-            <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}">
+            <img src="{{ url_for('get_svg') }}" alt="{{ lab_status.alt_text }}" id="lab-svg">
             <div>
-                <div class="lab-status">
+                <div class="lab-status" id="lab-status-banner">
                     <h2>Lab Status:</h2>
-                    <div class="status">{{ lab_status.state }}</div>
-                    <div class="details">
+                    <div class="status" id="lab-state">{{ lab_status.state }}</div>
+                    <div class="details" id="lab-details">
                         {{ lab_status.turtlebots_available }} Turtlebot{{ 's' if lab_status.turtlebots_available != 1 }} Open<br>
                         {{ lab_status.ur7es_available }} UR7e{{ 's' if lab_status.ur7es_available != 1 }} Open
                     </div>
                 </div>
                 {% if lab_status.show_book_robot %}
-                <a href="https://calendar.google.com/calendar/u/0/appointments/AcZssZ0TeYC8D4SlTbF-FSihP5FtNVmiGVKQbRVYQC8=" target="_blank" style="text-decoration: none;">
+                <a href="https://calendar.google.com/calendar/u/0/appointments/AcZssZ0TeYC8D4SlTbF-FSihP5FtNVmiGVKQbRVYQC8=" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">
                     <button class="queue-button">Book Robot</button>
                 </a>
                 {% endif %}
@@ -219,10 +220,10 @@
     </div>
 
     <!-- Sign-in Modal -->
-    <div id="signin-modal" class="modal">
+    <div id="signin-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="signin-modal-title">
         <div class="modal-content">
-            <span class="close" onclick="closeSignInModal()">&times;</span>
-            <h2>Sign in to join the queue</h2>
+            <button class="close" onclick="closeSignInModal()" aria-label="Close sign-in dialog">&times;</button>
+            <h2 id="signin-modal-title">Sign in to join the queue</h2>
             <p>Please sign in with your berkeley.edu account</p>
             <div id="google-signin-button"></div>
         </div>
