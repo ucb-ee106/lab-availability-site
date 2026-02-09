@@ -1,5 +1,4 @@
 import paramiko
-import pymysql
 import csv
 import os
 import time
@@ -8,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from lab_utils import (
     TURTLEBOT_STATIONS, UR7E_STATIONS,
     STATION_STATUS_CSV_PATH, LAST_UPDATE_FILE,
+    DB_CONFIG, get_db_connection,
     is_lab_oh_time, is_lab_active_time,
 )
 
@@ -20,14 +20,6 @@ NON_OH_INTERVAL = 60  # seconds - only update once per minute outside OH
 ALL_STATIONS = sorted(TURTLEBOT_STATIONS | UR7E_STATIONS)
 
 BASE_HOST = "c105-{}.eecs.berkeley.edu"
-
-DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "instapphost.eecs.berkeley.edu"),
-    "user": os.environ.get("DB_USER", "ee106a"),
-    "password": os.environ.get("DB_PASSWORD", ""),
-    "database": os.environ.get("DB_NAME", "ee106a"),
-}
-
 
 def should_run_update():
     """Check if we should run update based on lab status and last update time."""
@@ -119,17 +111,30 @@ def main():
     sorted_results = [(s, results[s]) for s in sorted(results)]
 
     # Connect to MariaDB
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Make sure the table exists
+    # Make sure the table exists with previous_occupied column
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stations (
         station INT PRIMARY KEY,
         occupied BOOLEAN NOT NULL,
+        previous_occupied BOOLEAN DEFAULT NULL,
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
     """)
+
+    # Add previous_occupied column if it doesn't exist (for existing deployments)
+    try:
+        cursor.execute("""
+        ALTER TABLE stations ADD COLUMN previous_occupied BOOLEAN DEFAULT NULL
+        """)
+        conn.commit()
+    except Exception:
+        pass  # Column already exists
+
+    # Snapshot current -> previous before updating
+    cursor.execute("UPDATE stations SET previous_occupied = occupied")
 
     # Update database
     for station, occupied in sorted_results:

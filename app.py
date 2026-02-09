@@ -1,23 +1,26 @@
 from flask import Flask, render_template, Response, request, jsonify, session, redirect, url_for
-import pymysql
 import csv
 import os
 import sys
 import time
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import secrets
 from werkzeug.utils import secure_filename
 
+import lab_utils
 from lab_utils import (
     TURTLEBOT_STATIONS, UR7E_STATIONS,
-    QUEUE_UR7E_CSV_PATH, QUEUE_TURTLEBOT_CSV_PATH,
-    MANUAL_OVERRIDES_CSV_PATH, PENDING_CLAIMS_CSV_PATH,
     ADMIN_USERS_FILE, UPLOAD_FOLDER, CALENDAR_PATH,
     DESK_REGEX,
-    get_current_lab_event, get_manual_overrides, file_lock,
+    DATA_SOURCE, get_db_connection,
+    get_current_lab_event, get_manual_overrides,
+    # Data access layer
+    get_queue, add_to_queue, remove_from_queue, reorder_queue, reposition_queue,
+    get_claimed_stations, get_pending_claim, mark_claim_confirmed,
+    set_manual_override,
 )
 
 app = Flask(__name__)
@@ -54,8 +57,6 @@ GREEN = '#00A676'
 RED = '#EB9486'
 YELLOW = '#F3DE8A'  # Claimed/pending
 
-# Data source configuration (csv or database)
-DATA_SOURCE = os.environ.get('DATA_SOURCE', 'csv').lower()
 ALLOWED_EXTENSIONS = {'ics'}
 
 # Create upload folder if it doesn't exist
@@ -86,13 +87,6 @@ if len(sys.argv) > 1:
 else:
     CSV_PATH = 'csv/station_status.csv'
 
-DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "instapphost.eecs.berkeley.edu"),
-    "user": os.environ.get("DB_USER", "ee106a"),
-    "password": os.environ.get("DB_PASSWORD", ""),
-    "database": os.environ.get("DB_NAME", "ee106a"),
-}
-
 # ---------------------------------------------------------------------------
 # Caches
 # ---------------------------------------------------------------------------
@@ -108,42 +102,10 @@ _admin_cache = {'emails': None, 'time': 0, 'mtime': 0}
 _ADMIN_CACHE_TTL = 60  # seconds
 
 
-def get_claimed_stations():
-    """Get stations with active pending claims."""
-    claimed = {}
-    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
-        return claimed
-
-    try:
-        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if 'station' not in row or not row['station']:
-                    continue
-
-                is_confirmed = row.get('confirmed', '').lower() == 'true'
-                expires_at = datetime.fromisoformat(row['expires_at'])
-
-                # Confirmed claims don't expire (until station is occupied)
-                # Unconfirmed claims expire after 5 min
-                if is_confirmed or expires_at > datetime.now():
-                    station = int(row['station'])
-                    time_remaining = int((expires_at - datetime.now()).total_seconds())
-                    claimed[station] = {
-                        'name': row['name'],
-                        'expires_at': row['expires_at'],
-                        'time_remaining': max(0, time_remaining),
-                        'confirmed': is_confirmed
-                    }
-    except Exception as e:
-        print(f"Error reading pending claims: {e}")
-
-    return claimed
-
 def get_station_data():
     """Get station data from configured source (CSV or database), applying manual overrides."""
     if DATA_SOURCE == 'database':
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT station, occupied FROM stations")
         data = cursor.fetchall()
@@ -211,37 +173,10 @@ def determine_lab_state(total_available):
     return STATE_OPEN
 
 def get_queue_data():
-    """Get queue data from CSV files for both robot types."""
-    ur7e_queue = []
-    turtlebot_queue = []
-
-    # Read UR7e queue
-    try:
-        with open(QUEUE_UR7E_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                ur7e_queue.append({
-                    'name': row['name'],
-                    'email': row['email']
-                })
-    except FileNotFoundError:
-        pass
-
-    # Read Turtlebot queue
-    try:
-        with open(QUEUE_TURTLEBOT_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                turtlebot_queue.append({
-                    'name': row['name'],
-                    'email': row['email']
-                })
-    except FileNotFoundError:
-        pass
-
+    """Get queue data for both robot types."""
     return {
-        'ur7e': ur7e_queue,
-        'turtlebot': turtlebot_queue
+        'ur7e': get_queue('ur7e'),
+        'turtlebot': get_queue('turtlebot'),
     }
 
 def generate_lab_alt_text(station_data):
@@ -555,7 +490,7 @@ def get_current_user():
 
 
 @app.route('/api/queue/add', methods=['POST'])
-def add_to_queue():
+def api_add_to_queue():
     """Add authenticated user to specified queue."""
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
@@ -567,38 +502,9 @@ def add_to_queue():
         return jsonify({'error': 'Invalid queue type'}), 400
 
     user = session['user']
-    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
-
-    with file_lock(csv_path):
-        existing_entries = []
-        file_exists = os.path.exists(csv_path)
-
-        if file_exists:
-            try:
-                with open(csv_path, 'r') as f:
-                    reader = csv.DictReader(f)
-                    existing_entries = list(reader)
-
-                # Check for duplicate
-                for entry in existing_entries:
-                    if entry['email'] == user['email']:
-                        return jsonify({'error': 'You are already in this queue'}), 400
-
-            except Exception as e:
-                return jsonify({'error': 'Error reading queue'}), 500
-        else:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-
-        # Rewrite entire file (atomic with lock held)
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-            writer.writeheader()
-            writer.writerows(existing_entries)
-            writer.writerow({
-                'name': user['name'],
-                'email': user['email']
-            })
+    success, error = add_to_queue(queue_type, user['name'], user['email'])
+    if not success:
+        return jsonify({'error': error}), 400
 
     return jsonify({
         'success': True,
@@ -607,19 +513,17 @@ def add_to_queue():
 
 
 @app.route('/api/queue/remove', methods=['POST'])
-def remove_from_queue():
+def api_remove_from_queue():
     """Remove a user from specified queue (admin only)."""
-    # Check authentication
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    # Check admin privileges
     user_email = session['user']['email']
     if not is_admin_user(user_email):
         return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json
-    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    queue_type = data.get('queue_type')
     email_to_remove = data.get('email')
 
     if queue_type not in ['turtlebot', 'ur7e']:
@@ -628,56 +532,29 @@ def remove_from_queue():
     if not email_to_remove:
         return jsonify({'error': 'Email is required'}), 400
 
-    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+    if not remove_from_queue(queue_type, email_to_remove):
+        return jsonify({'error': 'User not found in queue'}), 404
 
-    # Read current queue
-    if not os.path.exists(csv_path):
-        return jsonify({'error': 'Queue does not exist'}), 404
-
-    try:
-        with file_lock(csv_path):
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                entries = list(reader)
-
-            # Filter out the entry to remove
-            original_count = len(entries)
-            entries = [e for e in entries if e['email'] != email_to_remove]
-
-            if len(entries) == original_count:
-                return jsonify({'error': 'User not found in queue'}), 404
-
-            # Write back to file
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-                writer.writeheader()
-                writer.writerows(entries)
-
-        return jsonify({
-            'success': True,
-            'message': f'Removed from {queue_type} queue'
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+    return jsonify({
+        'success': True,
+        'message': f'Removed from {queue_type} queue'
+    })
 
 
 @app.route('/api/queue/reorder', methods=['POST'])
-def reorder_queue():
+def api_reorder_queue():
     """Move a queue entry up or down (admin only)."""
-    # Check authentication
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    # Check admin privileges
     user_email = session['user']['email']
     if not is_admin_user(user_email):
         return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json
-    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    queue_type = data.get('queue_type')
     email = data.get('email')
-    direction = data.get('direction')  # 'up' or 'down'
+    direction = data.get('direction')
 
     if queue_type not in ['turtlebot', 'ur7e']:
         return jsonify({'error': 'Invalid queue type'}), 400
@@ -688,69 +565,31 @@ def reorder_queue():
     if direction not in ['up', 'down']:
         return jsonify({'error': 'Invalid direction'}), 400
 
-    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+    success, error = reorder_queue(queue_type, email, direction)
+    if not success:
+        code = 404 if 'not found' in (error or '').lower() else 400
+        return jsonify({'error': error}), code
 
-    # Read current queue
-    if not os.path.exists(csv_path):
-        return jsonify({'error': 'Queue does not exist'}), 404
-
-    try:
-        with file_lock(csv_path):
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                entries = list(reader)
-
-            # Find the index of the entry to move
-            index = None
-            for i, entry in enumerate(entries):
-                if entry['email'] == email:
-                    index = i
-                    break
-
-            if index is None:
-                return jsonify({'error': 'User not found in queue'}), 404
-
-            # Perform the swap
-            if direction == 'up':
-                if index == 0:
-                    return jsonify({'error': 'Already at the top of the queue'}), 400
-                entries[index], entries[index - 1] = entries[index - 1], entries[index]
-            else:  # down
-                if index == len(entries) - 1:
-                    return jsonify({'error': 'Already at the bottom of the queue'}), 400
-                entries[index], entries[index + 1] = entries[index + 1], entries[index]
-
-            # Write back to file
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-                writer.writeheader()
-                writer.writerows(entries)
-
-        return jsonify({
-            'success': True,
-            'message': f'Queue order updated'
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+    return jsonify({
+        'success': True,
+        'message': 'Queue order updated'
+    })
 
 
 @app.route('/api/queue/reposition', methods=['POST'])
 def reposition_in_queue():
     """Move a queue entry to a specific position (admin only)."""
-    # Check authentication
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    # Check admin privileges
     user_email = session['user']['email']
     if not is_admin_user(user_email):
         return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json
-    queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'
+    queue_type = data.get('queue_type')
     email = data.get('email')
-    new_index = data.get('new_index')  # 0-based index
+    new_index = data.get('new_index')
 
     if queue_type not in ['turtlebot', 'ur7e']:
         return jsonify({'error': 'Invalid queue type'}), 400
@@ -761,68 +600,30 @@ def reposition_in_queue():
     if new_index is None or not isinstance(new_index, int) or new_index < 0:
         return jsonify({'error': 'Valid new_index is required'}), 400
 
-    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
+    success, error = reposition_queue(queue_type, email, new_index)
+    if not success:
+        code = 404 if 'not found' in (error or '').lower() else 400
+        return jsonify({'error': error}), code
 
-    # Read current queue
-    if not os.path.exists(csv_path):
-        return jsonify({'error': 'Queue does not exist'}), 404
-
-    try:
-        with file_lock(csv_path):
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                entries = list(reader)
-
-            # Find the entry to move
-            old_index = None
-            entry_to_move = None
-            for i, entry in enumerate(entries):
-                if entry['email'] == email:
-                    old_index = i
-                    entry_to_move = entry
-                    break
-
-            if old_index is None:
-                return jsonify({'error': 'User not found in queue'}), 404
-
-            # Validate new_index
-            if new_index >= len(entries):
-                new_index = len(entries) - 1
-
-            # Remove from old position and insert at new position
-            entries.pop(old_index)
-            entries.insert(new_index, entry_to_move)
-
-            # Write back to file
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-                writer.writeheader()
-                writer.writerows(entries)
-
-        return jsonify({
-            'success': True,
-            'message': f'Queue order updated'
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Error updating queue: {str(e)}'}), 500
+    return jsonify({
+        'success': True,
+        'message': 'Queue order updated'
+    })
 
 
 @app.route('/api/station/override', methods=['POST'])
-def set_station_override():
+def api_set_station_override():
     """Set or clear a manual override for a station (admin only)."""
-    # Check authentication
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    # Check admin privileges
     user_email = session['user']['email']
     if not is_admin_user(user_email):
         return jsonify({'error': 'Admin access required'}), 403
 
     data = request.json
     station = data.get('station')
-    override_occupied = data.get('override_occupied')  # True, False, or None to clear
+    override_occupied = data.get('override_occupied')
 
     if station is None or not isinstance(station, int):
         return jsonify({'error': 'Valid station number is required'}), 400
@@ -830,45 +631,18 @@ def set_station_override():
     if station not in TURTLEBOT_STATIONS and station not in UR7E_STATIONS:
         return jsonify({'error': 'Invalid station number'}), 400
 
-    try:
-        with file_lock(MANUAL_OVERRIDES_CSV_PATH):
-            # Read current overrides
-            overrides = {}
-            if os.path.exists(MANUAL_OVERRIDES_CSV_PATH):
-                with open(MANUAL_OVERRIDES_CSV_PATH, 'r') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        overrides[int(row['station'])] = row['override_occupied']
+    if override_occupied is not None and not isinstance(override_occupied, bool):
+        return jsonify({'error': 'override_occupied must be true, false, or null'}), 400
 
-            # Update or remove override
-            if override_occupied is None:
-                # Clear override
-                if station in overrides:
-                    del overrides[station]
-                    message = f'Cleared override for station {station}'
-                else:
-                    return jsonify({'error': 'No override exists for this station'}), 404
-            else:
-                # Set override
-                if not isinstance(override_occupied, bool):
-                    return jsonify({'error': 'override_occupied must be true, false, or null'}), 400
-                overrides[station] = 'true' if override_occupied else 'false'
-                message = f'Set station {station} override to {"occupied" if override_occupied else "available"}'
+    success, message = set_manual_override(station, override_occupied)
+    if not success:
+        code = 404 if 'No override exists' in message else 500
+        return jsonify({'error': message}), code
 
-            # Write back to file
-            with open(MANUAL_OVERRIDES_CSV_PATH, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['station', 'override_occupied'])
-                writer.writeheader()
-                for s, occupied in sorted(overrides.items()):
-                    writer.writerow({'station': s, 'override_occupied': occupied})
-
-        return jsonify({
-            'success': True,
-            'message': message
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Error setting override: {str(e)}'}), 500
+    return jsonify({
+        'success': True,
+        'message': message
+    })
 
 
 @app.route('/api/station/overrides', methods=['GET'])
@@ -882,95 +656,6 @@ def get_station_overrides():
         })
     except Exception as e:
         return jsonify({'error': f'Error getting overrides: {str(e)}'}), 500
-
-
-def get_pending_claim(token):
-    """Get a pending claim by token."""
-    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
-        return None
-
-    try:
-        with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row['claim_token'] == token:
-                    expires_at = datetime.fromisoformat(row['expires_at'])
-                    if expires_at > datetime.now():
-                        return row
-                    return None  # Expired
-    except Exception as e:
-        print(f"Error reading pending claims: {e}")
-
-    return None
-
-
-def delete_pending_claim(token):
-    """Delete a pending claim by token."""
-    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
-        return False
-
-    try:
-        with file_lock(PENDING_CLAIMS_CSV_PATH):
-            with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-                reader = csv.DictReader(f)
-                claims = [row for row in reader if row['claim_token'] != token]
-
-            with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
-                writer.writeheader()
-                writer.writerows(claims)
-        return True
-    except Exception as e:
-        print(f"Error deleting pending claim: {e}")
-        return False
-
-
-def mark_claim_confirmed(token):
-    """Mark a claim as confirmed (user clicked the button)."""
-    if not os.path.exists(PENDING_CLAIMS_CSV_PATH):
-        return False
-
-    try:
-        with file_lock(PENDING_CLAIMS_CSV_PATH):
-            with open(PENDING_CLAIMS_CSV_PATH, 'r') as f:
-                reader = csv.DictReader(f)
-                claims = list(reader)
-
-            for claim in claims:
-                if claim['claim_token'] == token:
-                    claim['confirmed'] = 'true'
-
-            with open(PENDING_CLAIMS_CSV_PATH, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['email', 'name', 'station_type', 'station', 'claim_token', 'expires_at', 'confirmed'])
-                writer.writeheader()
-                writer.writerows(claims)
-        return True
-    except Exception as e:
-        print(f"Error marking claim confirmed: {e}")
-        return False
-
-
-def remove_from_queue_by_email(queue_type, email):
-    """Remove a user from the queue by email."""
-    csv_path = QUEUE_TURTLEBOT_CSV_PATH if queue_type == 'turtlebot' else QUEUE_UR7E_CSV_PATH
-
-    if not os.path.exists(csv_path):
-        return False
-
-    try:
-        with file_lock(csv_path):
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                entries = [row for row in reader if row['email'] != email]
-
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
-                writer.writeheader()
-                writer.writerows(entries)
-        return True
-    except Exception as e:
-        print(f"Error removing from queue: {e}")
-        return False
 
 
 @app.route('/claim/<token>')
@@ -1004,8 +689,8 @@ def confirm_claim():
         return jsonify({'error': 'Invalid or expired claim'}), 404
 
     # Remove from BOTH queues (they got a station, no need to wait in either queue)
-    remove_from_queue_by_email('turtlebot', claim['email'])
-    remove_from_queue_by_email('ur7e', claim['email'])
+    remove_from_queue('turtlebot', claim['email'])
+    remove_from_queue('ur7e', claim['email'])
 
     # Mark claim as confirmed (don't delete - keeps station yellow until they log in)
     mark_claim_confirmed(token)

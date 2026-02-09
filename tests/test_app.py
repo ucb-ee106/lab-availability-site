@@ -205,7 +205,7 @@ class TestQueueAdd:
 
     def test_add_to_queue_success(self, client, mock_session, tmp_path):
         csv_path = str(tmp_path / "queue_turtlebot.csv")
-        with mock.patch('app.QUEUE_TURTLEBOT_CSV_PATH', csv_path):
+        with mock.patch.object(lab_utils, 'QUEUE_TURTLEBOT_CSV_PATH', csv_path):
             resp = client.post('/api/queue/add',
                               json={'queue_type': 'turtlebot'})
         assert resp.status_code == 200
@@ -229,14 +229,14 @@ class TestQueueRemove:
 
     def test_remove_success(self, client, mock_admin_session, tmp_queues):
         tb_path, _ = tmp_queues
-        with mock.patch('app.QUEUE_TURTLEBOT_CSV_PATH', tb_path):
+        with mock.patch.object(lab_utils, 'QUEUE_TURTLEBOT_CSV_PATH', tb_path):
             resp = client.post('/api/queue/remove',
                               json={'queue_type': 'turtlebot', 'email': 'alice@berkeley.edu'})
         assert resp.status_code == 200
 
     def test_remove_nonexistent_user(self, client, mock_admin_session, tmp_queues):
         tb_path, _ = tmp_queues
-        with mock.patch('app.QUEUE_TURTLEBOT_CSV_PATH', tb_path):
+        with mock.patch.object(lab_utils, 'QUEUE_TURTLEBOT_CSV_PATH', tb_path):
             resp = client.post('/api/queue/remove',
                               json={'queue_type': 'turtlebot', 'email': 'nobody@b.edu'})
         assert resp.status_code == 404
