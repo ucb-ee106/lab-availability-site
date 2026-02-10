@@ -244,6 +244,24 @@ def is_lab_active_time():
     return get_current_lab_event()['type'] in ('lab_oh', 'lab_section')
 
 
+def is_queue_active_time():
+    """True during 106A Lab OH or 106B Lab Section (queue-eligible times).
+
+    Queues are only available during these specific sessions.
+    Generic Lab OH (no class specified) is treated as 106A.
+    """
+    event = get_current_lab_event()
+    etype = event['type']
+    eclass = event['class']
+    # 106A OH (or generic Lab OH, which is assumed to be 106A)
+    if etype == 'lab_oh' and eclass != '106B':
+        return True
+    # 106B Lab Section
+    if etype == 'lab_section' and eclass == '106B':
+        return True
+    return False
+
+
 # ===========================================================================
 # Data Access Layer
 # ===========================================================================
@@ -664,6 +682,46 @@ def _reorder_queue_db(queue_type, email, direction):
         return True, None
     except Exception as e:
         return False, f'Error updating queue: {e}'
+
+
+def clear_queue(queue_type):
+    """Clear all entries from a queue. Returns True on success."""
+    if DATA_SOURCE == 'database':
+        return _clear_queue_db(queue_type)
+    return _clear_queue_csv(queue_type)
+
+
+def _clear_queue_csv(queue_type):
+    csv_path = _queue_csv_path(queue_type)
+    try:
+        with file_lock(csv_path):
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['name', 'email'])
+                writer.writeheader()
+        return True
+    except Exception as e:
+        print(f"Error clearing queue: {e}")
+        return False
+
+
+def _clear_queue_db(queue_type):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM queues WHERE queue_type = %s", (queue_type,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error clearing queue from DB: {e}")
+        return False
+
+
+def clear_all_queues():
+    """Clear both turtlebot and ur7e queues."""
+    clear_queue('turtlebot')
+    clear_queue('ur7e')
 
 
 def reposition_queue(queue_type, email, new_index):

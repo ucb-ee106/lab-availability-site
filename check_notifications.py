@@ -12,12 +12,12 @@ import secrets
 
 from lab_utils import (
     TURTLEBOT_STATIONS, UR7E_STATIONS,
-    is_lab_oh_time,
+    is_queue_active_time,
     # Data access layer
-    get_station_states, get_first_in_queue,
+    get_station_states, get_first_in_queue, get_queue,
     get_all_pending_claims, save_pending_claims,
     create_pending_claim as dal_create_pending_claim,
-    remove_from_queue, get_previous_states, save_states,
+    remove_from_queue, clear_all_queues, get_previous_states, save_states,
 )
 
 # Configuration from environment
@@ -218,8 +218,23 @@ def check_expired_claims(claims, current_states):
 
 def main():
     """Main notification check loop."""
-    # Quick exit if not Lab OH
-    if not is_lab_oh_time():
+    # Only process queues during 106A Lab OH and 106B Lab Sections
+    if not is_queue_active_time():
+        # Clear queues when session is not active; preserve confirmed claims
+        turtlebot_q = get_queue('turtlebot')
+        ur7e_q = get_queue('ur7e')
+        claims = get_all_pending_claims()
+        if turtlebot_q or ur7e_q or claims:
+            print(f"Queue session ended at {datetime.now()}")
+            if turtlebot_q or ur7e_q:
+                print(f"  Clearing {len(turtlebot_q)} from turtlebot, {len(ur7e_q)} from ur7e")
+                clear_all_queues()
+            # Keep confirmed claims (student is on their way); clear unconfirmed
+            confirmed = [c for c in claims if c.get('confirmed', '').lower() == 'true']
+            unconfirmed = [c for c in claims if c.get('confirmed', '').lower() != 'true']
+            if unconfirmed:
+                print(f"  Clearing {len(unconfirmed)} unconfirmed claims, keeping {len(confirmed)} confirmed")
+                save_pending_claims(confirmed)
         return
 
     print(f"Running notification check at {datetime.now()}")

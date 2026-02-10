@@ -270,18 +270,22 @@ def get_lab_status():
     total_available = turtlebots_available + ur7es_available
     state = determine_lab_state(total_available)
 
-    # Show queues only when that robot type is full
-    show_ur7e_queue = (ur7es_available == 0)
-    show_turtlebot_queue = (turtlebots_available == 0)
+    # Queue is only active during 106A OH and 106B Lab Sections
+    queue_active = lab_utils.is_queue_active_time()
 
-    # Show book robot button only when lab is open
-    show_book_robot = (state == STATE_OPEN)
+    # Show queues only when queue is active AND that robot type is full
+    show_ur7e_queue = queue_active and (ur7es_available == 0)
+    show_turtlebot_queue = queue_active and (turtlebots_available == 0)
+
+    # Always show the book robot button
+    show_book_robot = True
 
     return {
         'state': state,
         'color': STATE_COLORS[state],
         'turtlebots_available': turtlebots_available,
         'ur7es_available': ur7es_available,
+        'queue_active': queue_active,
         'show_ur7e_queue': show_ur7e_queue,
         'show_turtlebot_queue': show_turtlebot_queue,
         'alt_text': generate_lab_alt_text(station_data),
@@ -494,6 +498,11 @@ def api_add_to_queue():
     """Add authenticated user to specified queue."""
     if 'user' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
+
+    # Check if queue is currently active
+    lab_status = get_lab_status()
+    if not lab_status.get('queue_active'):
+        return jsonify({'error': 'Queue is only available during 106A Lab OH and 106B Lab Sections'}), 403
 
     data = request.json
     queue_type = data.get('queue_type')  # 'turtlebot' or 'ur7e'

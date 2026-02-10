@@ -148,11 +148,30 @@ function closeSignInModal() {
 // Auto-refresh (polls /api/lab-data every 10 s)
 // ---------------------------------------------------------------------------
 
+// Track queue visibility state for change detection
+let _prevQueueState = window._initialQueueState || null;
+
 async function refreshLabData() {
     try {
         const resp = await fetch('/api/lab-data');
         if (!resp.ok) return;
         const data = await resp.json();
+
+        // Check if queue visibility changed - reload page to update queue sections
+        if (_prevQueueState) {
+            const newState = data.status;
+            if (_prevQueueState.turtlebot !== newState.show_turtlebot_queue ||
+                _prevQueueState.ur7e !== newState.show_ur7e_queue ||
+                _prevQueueState.active !== newState.queue_active) {
+                location.reload();
+                return;
+            }
+        }
+        _prevQueueState = {
+            turtlebot: data.status.show_turtlebot_queue,
+            ur7e: data.status.show_ur7e_queue,
+            active: data.status.queue_active
+        };
 
         // Update lab status banner
         const banner = document.getElementById('lab-status-banner');
